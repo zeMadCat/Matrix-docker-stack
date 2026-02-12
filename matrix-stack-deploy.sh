@@ -1,21 +1,44 @@
 #!/bin/bash
 
 # =================================================================
-# TITLE: MATRIX STACK DEPLOYER
+# TITLE: MATRIX STACK DEPLOYER (AUTO-PROVISION EDITION)
 # AUTHOR: MadCat (2026)
 # =================================================================
 
+# --- [ SELF-HEALING / SANITIZATION ] ---
+# Force remove Windows CR characters if present
+sed -i 's/\r$//' "$0" 2>/dev/null
+
 main_deployment() {
+    # Define colors early so draw_header works
+    P='\033[1;95m'; C='\033[1;96m'; Y='\033[1;93m'; G='\033[1;92m'; R='\033[1;91m'; W='\033[1;97m'; NC='\033[0m'
+    
     draw_header
     
-    # --- [ 1. SYSTEM AUDIT & DOCKGE ] ---
-    echo -e "${WARNING}>> Auditing System Environment...${RESET}"
+    # --- [ 1. DEPENDENCY AUTO-INSTALL ] ---
+    echo -e "${Y}>> Verifying System Dependencies...${NC}"
+    
+    for tool in curl openssl; do
+        if ! command -v $tool &> /dev/null; then
+            echo -e "${R}[!] $tool is missing. Attempting auto-install...${NC}"
+            if command -v apt-get &> /dev/null; then
+                sudo apt-get update && sudo apt-get install -y $tool
+            elif command -v yum &> /dev/null; then
+                sudo yum install -y $tool
+            else
+                echo -e "${R}Error: Could not auto-install $tool. Please install manually.${NC}"
+                exit 1
+            fi
+        fi
+    done
+
+    # --- [ 2. SYSTEM AUDIT & DOCKGE ] ---
     DOCKGE_INSTALLED=$(docker ps -qf name=dockge 2>/dev/null)
     if [ -z "$DOCKGE_INSTALLED" ] && [ ! -d "/opt/dockge" ]; then
-        echo -e "${ERROR}[!] Dockge management interface not detected.${RESET}"
+        echo -e "${R}[!] Dockge management interface not detected.${NC}"
         read -p "Install Dockge (includes Docker & Compose)? (y/n): " INST_DOCKGE
         if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
-            echo -e "${WARNING}>> Initializing Docker Stack...${RESET}"
+            echo -e "${Y}>> Initializing Docker Stack...${NC}"
             curl -fsSL https://get.docker.com | sh
             sudo usermod -aG docker $USER
             mkdir -p /opt/dockge /opt/stacks
@@ -24,25 +47,34 @@ main_deployment() {
         fi
     fi
 
-    # --- [ 2. NETWORK DISCOVERY ] ---
-    echo -e "${WARNING}>> Verifying Network Parameters...${RESET}"
+    # --- [ 3. NETWORK DISCOVERY ] ---
+    echo -e "${Y}>> Verifying Network Parameters...${NC}"
     RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org || curl -sL --max-time 5 https://ifconfig.me/ip)
     AUTO_PUBLIC_IP=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
     AUTO_LOCAL_IP=$(hostname -I | awk '{print $1}')
-    echo -e "   [+] Public IP: ${SUCCESS}$AUTO_PUBLIC_IP${RESET}"
-    echo -e "   [+] Local IP:  ${SUCCESS}$AUTO_LOCAL_IP${RESET}"
+    
+    echo -e "   [+] Public IP: ${G}$AUTO_PUBLIC_IP${NC}"
+    echo -e "   [+] Local IP:  ${G}$AUTO_LOCAL_IP${NC}"
     read -p "Confirm network settings? (y/n): " CONFIRM_IP
-    [[ "$CONFIRM_IP" =~ ^[Nn]$ ]] && read -p "Enter Public IP: " PUBLIC_IP && read -p "Enter Local IP: " LOCAL_IP || { PUBLIC_IP=$AUTO_PUBLIC_IP; LOCAL_IP=$AUTO_LOCAL_IP; }
+    
+    if [[ "$CONFIRM_IP" =~ ^[Nn]$ ]]; then
+        read -p "   Enter Public IP: " PUBLIC_IP
+        read -p "   Enter Local IP:  " LOCAL_IP
+    else
+        PUBLIC_IP=$AUTO_PUBLIC_IP
+        LOCAL_IP=$AUTO_LOCAL_IP
+    fi
 
-    # --- [ 3. PROXY & PATH ] ---
-    echo -e "\n${ACCENT}[ STEP 1 ] Infrastructure Selection${RESET}"
-    echo -e "${INFO}1)${RESET} NPM/Plus  ${INFO}2)${RESET} Cloudflare  ${INFO}3)${RESET} Caddy  ${INFO}4)${RESET} Traefik  ${INFO}5)${RESET} Generic"
+    # --- [ 4. INFRASTRUCTURE SELECTION ] ---
+    echo -e "\n${C}[ STEP 1 ] Infrastructure Selection${NC}"
+    echo -e "${W}1)${NC} NPM/Plus  ${W}2)${NC} Cloudflare  ${W}3)${NC} Caddy  ${W}4)${NC} Traefik  ${W}5)${NC} Generic"
     read -p "Select Proxy Strategy: " PROXY_CHOICE
+    
     TARGET_DIR="/opt/stacks/matrix-stack"
     mkdir -p "$TARGET_DIR/synapse" "$TARGET_DIR/postgres_data" "$TARGET_DIR/coturn"
 
-    # --- [ 4. CREDENTIALS ] ---
-    echo -e "\n${ACCENT}[ STEP 2 ] Service Configuration${RESET}"
+    # --- [ 5. SERVICE CONFIGURATION ] ---
+    echo -e "\n${C}[ STEP 2 ] Service Configuration${NC}"
     read -p "Base Domain (e.g. domain.com): " DOMAIN
     read -p "Matrix Subdomain (e.g. matrix): " SUB_MATRIX
     read -p "PostgreSQL Password: " DB_PASS
@@ -50,8 +82,8 @@ main_deployment() {
     read -s -p "Admin Password: " ADMIN_PASS
     echo -e "\n"
 
-    # --- [ 5. CONFIG GENERATION ] ---
-    echo -e "${WARNING}>> Generating Encryption Keys and Configuration...${RESET}"
+    # --- [ 6. CONFIG GENERATION ] ---
+    echo -e "${Y}>> Generating Encryption Keys and Configuration...${NC}"
     TURN_SECRET=$(openssl rand -hex 32)
     REG_SECRET=$(openssl rand -hex 32)
 
@@ -77,7 +109,10 @@ services:
   coturn:
     image: coturn/coturn:latest
     restart: unless-stopped
-    ports: [ "3478:3478/tcp", "3478:3478/udp", "49152-49252:49152-49252/udp" ]
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "49152-49252:49152-49252/udp"
     volumes: [ "./coturn/turnserver.conf:/etc/coturn/turnserver.conf" ]
     networks: [ matrix-net ]
 networks:
@@ -113,25 +148,24 @@ EOF
     draw_footer
 }
 
-# --- [ UI & THEME ENGINE ] ---
+# --- [ UI COMPONENTS ] ---
 
 draw_header() {
     clear
-    echo -e "${BANNER}================================================================${RESET}"
-    echo -e "${ACCENT}             MATRIX STACK DEPLOYER BY MADCAT                  ${RESET}"
-    echo -e "${BANNER}================================================================${RESET}"
-    echo -e "${INFO}  INCLUDES: ${RESET}${ACCENT}Synapse, Postgres, Coturn, Admin UI, Dockge${RESET}"
-    echo -e "${INFO}  PROXIES:  ${RESET}${ACCENT}NPM, Cloudflare, Caddy, Traefik, Universal${RESET}"
-    echo -e "${BANNER}================================================================${RESET}"
+    echo -e "${P}================================================================${NC}"
+    echo -e "${C}             MATRIX STACK DEPLOYER BY MADCAT                  ${NC}"
+    echo -e "${P}================================================================${NC}"
+    echo -e "${W}  SYSTEM COMPONENTS: ${NC}${C}Synapse, Postgres, Coturn, Admin UI, Dockge${NC}"
+    echo -e "${W}  SUPPORTED GATEWAYS: ${NC}${C}NPM, Cloudflare, Caddy, Traefik, Universal${NC}"
+    echo -e "${P}================================================================${NC}"
 }
 
 draw_footer() {
     clear
-    echo -e "${BANNER}================================================================${RESET}"
-    echo -e "${SUCCESS}              DEPLOYMENT SUCCESSFULLY COMPLETED                 ${RESET}"
-    echo -e "${BANNER}================================================================${RESET}"
-    
-    echo -e "${ACCENT}>> REVERSE PROXY CONFIGURATION:${RESET}"
+    echo -e "${P}================================================================${NC}"
+    echo -e "${G}              DEPLOYMENT SUCCESSFULLY COMPLETED                 ${NC}"
+    echo -e "${P}================================================================${NC}"
+    echo -e "${C}>> REVERSE PROXY CONFIGURATION:${NC}"
     case $PROXY_CHOICE in
         1) echo -e "   Target: $SUB_MATRIX.$DOMAIN -> $LOCAL_IP:8008 (Websockets: Enabled)";;
         2) echo -e "   Service: http://$LOCAL_IP:8008 (Websockets: Enabled)";;
@@ -139,26 +173,15 @@ draw_footer() {
         4) echo -e "   Traefik Rule: Host(\`$SUB_MATRIX.$DOMAIN\`)";;
         5) echo -e "   Generic: Forward X-Forwarded-For headers to $LOCAL_IP:8008";;
     esac
-
-    echo -e "\n${BANNER}>> FIREWALL / PORT FORWARDING:${RESET}"
+    echo -e "\n${P}>> FIREWALL / PORT FORWARDING:${NC}"
     echo -e "   • 80/443 (TCP)   --> Web Traffic / Federation"
     echo -e "   • 3478 (TCP/UDP) --> VoIP Signaling"
     echo -e "   • 49152-49252 (UDP) --> Media Relay (TURN)"
-
-    echo -e "\n${WARNING}>> FINAL STEPS:${RESET}"
-    echo -e "   1. Launch Stack: ${INFO}cd $TARGET_DIR && docker compose up -d${RESET}"
-    echo -e "   2. Register Admin: ${INFO}docker exec -it synapse register_new_matrix_user...${RESET}"
-    echo -e "${BANNER}================================================================${RESET}"
+    echo -e "\n${Y}>> FINAL STEPS:${NC}"
+    echo -e "   1. Launch Stack: ${W}cd $TARGET_DIR && docker compose up -d${NC}"
+    echo -e "   2. Register Admin: ${W}docker exec -it synapse register_new_matrix_user...${NC}"
+    echo -e "${P}================================================================${NC}"
 }
 
-# --- [ COLOR THEME BOX ] ---
-BANNER='\033[1;95m'   # Pink
-ACCENT='\033[1;96m'   # Cyan
-WARNING='\033[1;93m'  # Yellow
-SUCCESS='\033[1;92m'  # Green
-ERROR='\033[1;91m'    # Red
-INFO='\033[1;97m'     # White
-RESET='\033[0m'       # Reset
-
-# Execute Application
+# Execute
 main_deployment
