@@ -12,6 +12,10 @@ draw_header() {
     echo -e "${BANNER}│              MATRIX SYNAPSE FULL STACK DEPLOYER              │${RESET}"
     echo -e "${BANNER}│                          by MadCat                           │${RESET}"
     echo -e "${BANNER}│                            v${gitv}                              │${RESET}"
+    echo -e "${BANNER}│                                                              │${RESET}"
+    echo -e "${BANNER}│                    Included Components:                     │${RESET}"
+    echo -e "${BANNER}│                • Synapse • PostgreSQL • Coturn               │${RESET}"
+    echo -e "${BANNER}│              • LiveKit • Synapse-Admin • Element Call        │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -255,7 +259,7 @@ main_deployment() {
     done < <(docker network ls --filter "name=matrix-net" --format "{{.Name}}" 2>/dev/null)
     
     if [ "$found_containers" = true ] || [ "$found_volumes" = true ] || [ "$found_networks" = true ] || [ -n "$stack_dir" ]; then
-        echo -e "   ${WARNING}[!] Found existing Matrix resources:${RESET}"
+        echo -e "   ${ERROR}[!] Found existing Matrix resources:${RESET}"
         
         if [ "$found_containers" = true ]; then
             echo -e "   • Containers: ${CONTAINER_NAME}${containers_list[*]}${RESET}"
@@ -372,7 +376,7 @@ main_deployment() {
     while read -r -t 0; do read -r; done
     
     echo -e "\n${ACCENT}Server Name Configuration:${RESET}"
-    echo -e "   ${WARNING}This will appear in user IDs like @username:servername${RESET}"
+    echo -e "   This will appear in user IDs like ${USER_ID_EXAMPLE}@username:servername${RESET}"
     echo -e "   ${CHOICE_COLOR}1)${RESET} Use base domain (${INFO}$DOMAIN${RESET})"
     echo -e "   ${CHOICE_COLOR}2)${RESET} Use full subdomain (${INFO}$SUB_MATRIX.$DOMAIN${RESET})"
     echo -e "   ${CHOICE_COLOR}3)${RESET} Use custom server name (e.g., myserver, matrix.example.com)"
@@ -381,12 +385,12 @@ main_deployment() {
     
     case $SERVERNAME_SELECT in
         1) SERVER_NAME="$DOMAIN"
-           echo -e "   ${INFO}User IDs will be: @username:${USER_ID_VALUE}${DOMAIN}${RESET}" ;;
+           echo -e "   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${DOMAIN}${RESET}" ;;
         2) SERVER_NAME="$SUB_MATRIX.$DOMAIN"
-           echo -e "   ${INFO}User IDs will be: @username:${USER_ID_VALUE}${SUB_MATRIX}.${DOMAIN}${RESET}" ;;
+           echo -e "   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${SUB_MATRIX}.${DOMAIN}${RESET}" ;;
         3) echo -ne "Enter custom server name: ${WARNING}"
            read -r SERVER_NAME
-           echo -e "${RESET}   ${INFO}User IDs will be: @username:${USER_ID_VALUE}${SERVER_NAME}${RESET}" ;;
+           echo -e "${RESET}   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${SERVER_NAME}${RESET}" ;;
     esac
     
     echo -ne "Admin Username (e.g., admin): ${WARNING}"
@@ -1153,6 +1157,7 @@ REMOVED='\033[1;91m'          # Red for "Removed" text
 CONTAINER_NAME='\033[1;93m'   # Yellow for container names
 NETWORK_NAME='\033[1;92m'     # Green for network names
 USER_ID_VALUE='\033[1;94m'    # Blue for user ID values
+USER_ID_EXAMPLE='\033[1;94m'  # Blue for user ID example
 REGISTRATION_DISABLED='\033[1;91m'  # Red for registration disabled
 REGISTRATION_ENABLED='\033[1;92m'   # Green for registration enabled
 RESET='\033[0m'               # Reset to default
