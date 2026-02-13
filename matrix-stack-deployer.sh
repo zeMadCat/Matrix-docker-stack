@@ -1,18 +1,17 @@
 #!/bin/bash
 
 # Version
-SCRIPT_VERSION="1.0"
+gitv="1.0"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
-# Header
 # Header
 draw_header() {
     clear
     echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BANNER}│              MATRIX SYNAPSE FULL STACK DEPLOYER              │${RESET}"
-    echo -e "${BANNER}│                        by MadCat                             │${RESET}"
-    echo -e "${BANNER}│                           v${SCRIPT_VERSION}                               │${RESET}"
+    echo -e "${BANNER}│                          by MadCat                           │${RESET}"
+    echo -e "${BANNER}│                            v${gitv}                              │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -32,10 +31,9 @@ check_for_updates() {
         return 1
     fi
     
-    echo -e "   ${INFO}Current version: v${SCRIPT_VERSION}${RESET}"
-    echo -e "   ${INFO}Latest version:  v${LATEST_VERSION}${RESET}"
-    
-    if [ "$LATEST_VERSION" != "$SCRIPT_VERSION" ]; then
+    if [ "$LATEST_VERSION" != "$gitv" ]; then
+        echo -e "   ${INFO}Current version: v${gitv}${RESET}"
+        echo -e "   ${INFO}Latest version:  v${LATEST_VERSION}${RESET}"
         echo -e "\n${WARNING}A new version (v${LATEST_VERSION}) is available!${RESET}"
         echo -ne "Update now? (y/n): "
         read -r UPDATE_CONFIRM
@@ -391,6 +389,25 @@ main_deployment() {
     read -r ADMIN_USER
     echo -e "${RESET}"
     
+    # Registration Configuration
+    echo -e "\n${ACCENT}Registration Configuration:${RESET}"
+    echo -e "   ${WARNING}Allow new users to register without admin approval?${RESET}"
+    echo -e "   • ${SUCCESS}Enable registration (y):${RESET} Users can create accounts freely"
+    echo -e "   • ${ERROR}Disable registration (n):${RESET} Only admin can create users (recommended)"
+    echo -ne "Allow public registration? (default: n): "
+    read -r ALLOW_REGISTRATION
+    ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-n}
+    
+    if [[ "$ALLOW_REGISTRATION" =~ ^[Yy]$ ]]; then
+        ENABLE_REGISTRATION="true"
+        ENABLE_REGISTRATION_WITHOUT_VERIFICATION="true"
+        echo -e "   ${WARNING}⚠️  Warning: Public registration enabled - consider adding email or captcha verification${RESET}"
+    else
+        ENABLE_REGISTRATION="false"
+        ENABLE_REGISTRATION_WITHOUT_VERIFICATION="false"
+        echo -e "   ${SUCCESS}✓ Registration disabled - admin will create users manually${RESET}"
+    fi
+    
     echo -e "\n${ACCENT}Reverse Proxy Selection:${RESET}"
     echo -e "   ${CHOICE_COLOR}1)${RESET} Nginx Proxy Manager (NPM)"
     echo -e "   ${CHOICE_COLOR}2)${RESET} Nginx Proxy Manager Plus (NPM Plus)"
@@ -677,9 +694,9 @@ turn_shared_secret: "$TURN_SECRET"
 turn_user_lifetime: 86400000
 turn_allow_guests: false
 
-# Registration - Disabled by default for security
-enable_registration: false
-enable_registration_without_verification: false
+# Registration
+enable_registration: $ENABLE_REGISTRATION
+enable_registration_without_verification: $ENABLE_REGISTRATION_WITHOUT_VERIFICATION
 registration_shared_secret: "$REG_SECRET"
 
 # Rate limiting
@@ -778,7 +795,7 @@ NPMCONF
             
             clear
             echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-            echo -e "${BANNER}│              NPM SETUP - LIVEKIT PROXY                       │${RESET}"
+            echo -e "${BANNER}│                  NPM SETUP - LIVEKIT PROXY                   │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
             
             echo -e "\n${ACCENT}Create Proxy Host in NPM:${RESET}"
@@ -805,7 +822,7 @@ LKCONF
         if [[ "$SHOW_GUIDE" =~ ^[Yy]$ ]]; then
             clear
             echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-            echo -e "${BANNER}│              CADDY SETUP GUIDE                                │${RESET}"
+            echo -e "${BANNER}│                      CADDY SETUP GUIDE                       │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
             
             echo -e "\n${ACCENT}Caddyfile Configuration (${INFO}/etc/caddy/Caddyfile${ACCENT}):${RESET}\n"
@@ -855,7 +872,7 @@ CADDYCONF
         if [[ "$SHOW_GUIDE" =~ ^[Yy]$ ]]; then
             clear
             echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-            echo -e "${BANNER}│              TRAEFIK SETUP GUIDE                              │${RESET}"
+            echo -e "${BANNER}│                     TRAEFIK SETUP GUIDE                      │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
             
             echo -e "\n${ACCENT}Create dynamic configuration (${INFO}/opt/traefik/dynamic.yml${ACCENT}):${RESET}\n"
@@ -904,7 +921,7 @@ TRAEFIKDYNAMIC
         if [[ "$SHOW_GUIDE" =~ ^[Yy]$ ]]; then
             clear
             echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-            echo -e "${BANNER}│           CLOUDFLARE TUNNEL SETUP GUIDE                      │${RESET}"
+            echo -e "${BANNER}│                CLOUDFLARE TUNNEL SETUP GUIDE                 │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
             
             echo -e "\n${ACCENT}Update tunnel config (${INFO}~/.cloudflared/config.yml${ACCENT}):${RESET}\n"
@@ -948,6 +965,8 @@ draw_footer() {
         echo -e "   ${INFO}Admin Pass:${RESET}      ${ADMIN_PASS}"
     fi
     echo -e "   ${INFO}Admin Panel:${RESET}     http://$AUTO_LOCAL_IP:8009"
+    echo -e "   ${INFO}Matrix API (LAN):${RESET} http://$AUTO_LOCAL_IP:8008"
+    echo -e "   ${INFO}Matrix API (WAN):${RESET} https://$SUB_MATRIX.$DOMAIN"
 
     echo -e "\n${ACCENT}═══════════════════════ INTERNAL SECRETS ════════════════════════${RESET}"
     echo -e "   ${INFO}Postgres Pass:${RESET}   ${DB_PASS}"
@@ -1015,7 +1034,7 @@ PUBLIC_IP_COLOR='\033[1;94m'  # Light Blue
 LOCAL_IP_COLOR='\033[1;93m'   # Yellow/Gold
 DOCKER_COLOR='\033[1;34m'     # Medium Blue
 CHOICE_COLOR='\033[1;92m'     # Green
-RESET='\033[0m'
+RESET='\033[0m'               # Reset to default
 
 # Start deployment
 main_deployment "$1"
