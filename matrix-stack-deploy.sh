@@ -198,7 +198,7 @@ main_deployment() {
         stack_dir="$(pwd)/matrix-stack"
     fi
     
-    local matrix_patterns=("^synapse$" "^synapse-db$" "^synapse-admin$" "^coturn$" "^livekit$")
+    local matrix_patterns=("^synapse$" "^synapse-db$" "^synapse-admin$" "^coturn$" "^livekit$" "^element-call$")
     local found_containers=false
     local found_volumes=false
     local found_networks=false
@@ -213,7 +213,7 @@ main_deployment() {
                 if [ -n "$compose_project" ] && [[ "$compose_project" == *"matrix"* ]]; then
                     found_containers=true
                     containers_list+=("$container")
-                elif [[ "$container" =~ ^(synapse|synapse-db|synapse-admin|coturn|livekit)$ ]]; then
+                elif [[ "$container" =~ ^(synapse|synapse-db|synapse-admin|coturn|livekit|element-call)$ ]]; then
                     found_containers=true
                     containers_list+=("$container")
                 fi
@@ -221,7 +221,7 @@ main_deployment() {
         done < <(docker ps -a --filter "name=$pattern" --format "{{.Names}}" 2>/dev/null)
     done
     
-    local volume_patterns=("synapse" "postgres" "coturn" "livekit" "matrix")
+    local volume_patterns=("synapse" "postgres" "coturn" "livekit" "matrix" "element-call")
     for pattern in "${volume_patterns[@]}"; do
         while IFS= read -r volume; do
             if [ -n "$volume" ] && [[ "$volume" == *"$pattern"* ]]; then
@@ -238,7 +238,7 @@ main_deployment() {
                 local all_matrix=true
                 local containers=$(docker network inspect "$network" --format '{{json .Containers}}' 2>/dev/null | jq -r '.[] | .Name' 2>/dev/null)
                 for cont in $containers; do
-                    if [[ ! "$cont" =~ ^(synapse|synapse-db|synapse-admin|coturn|livekit)$ ]]; then
+                    if [[ ! "$cont" =~ ^(synapse|synapse-db|synapse-admin|coturn|livekit|element-call)$ ]]; then
                         all_matrix=false
                         break
                     fi
@@ -258,13 +258,13 @@ main_deployment() {
         echo -e "   ${WARNING}[!] Found existing Matrix resources:${RESET}"
         
         if [ "$found_containers" = true ]; then
-            echo -e "   • Containers: ${INFO}${containers_list[*]}${RESET}"
+            echo -e "   • Containers: ${CONTAINER_NAME}${containers_list[*]}${RESET}"
         fi
         if [ "$found_volumes" = true ]; then
             echo -e "   • Volumes: ${INFO}${volumes_list[*]}${RESET}"
         fi
         if [ "$found_networks" = true ]; then
-            echo -e "   • Networks: ${INFO}${networks_list[*]}${RESET}"
+            echo -e "   • Networks: ${NETWORK_NAME}${networks_list[*]}${RESET}"
         fi
         if [ -n "$stack_dir" ]; then
             if [[ "$stack_dir" == "/opt/stacks/"* ]]; then
@@ -281,17 +281,17 @@ main_deployment() {
         if [[ "$CLEANUP_CONFIRM" =~ ^[Yy]$ ]]; then
             echo -e "   ${ACCENT}>> Cleaning up resources...${RESET}"
             for container in "${containers_list[@]}"; do
-                docker stop "$container" >/dev/null 2>&1 && echo -e "      • Stopped: $container"
-                docker rm "$container" >/dev/null 2>&1 && echo -e "      • Removed: $container"
+                docker stop "$container" >/dev/null 2>&1 && echo -e "      • Stopped: ${CONTAINER_NAME}$container${RESET}"
+                docker rm "$container" >/dev/null 2>&1 && echo -e "      • ${REMOVED}Removed:${RESET} ${CONTAINER_NAME}$container${RESET}"
             done
             for volume in "${volumes_list[@]}"; do
-                docker volume rm "$volume" >/dev/null 2>&1 && echo -e "      • Removed volume: $volume"
+                docker volume rm "$volume" >/dev/null 2>&1 && echo -e "      • ${REMOVED}Removed volume:${RESET} ${INFO}$volume${RESET}"
             done
             for network in "${networks_list[@]}"; do
-                docker network rm "$network" >/dev/null 2>&1 && echo -e "      • Removed network: $network"
+                docker network rm "$network" >/dev/null 2>&1 && echo -e "      • ${REMOVED}Removed network:${RESET} ${NETWORK_NAME}$network${RESET}"
             done
             if [ -n "$stack_dir" ] && [ -d "$stack_dir" ]; then
-                rm -rf "$stack_dir" && echo -e "      • Removed directory: $stack_dir"
+                rm -rf "$stack_dir" && echo -e "      • ${REMOVED}Removed directory:${RESET} ${INFO}$stack_dir${RESET}"
             fi
             echo -e "   ${SUCCESS}✓ Cleanup completed${RESET}"
         fi
@@ -353,7 +353,7 @@ main_deployment() {
         fi
     fi
 
-    mkdir -p "$TARGET_DIR/synapse" "$TARGET_DIR/postgres_data" "$TARGET_DIR/coturn" "$TARGET_DIR/livekit"
+    mkdir -p "$TARGET_DIR/synapse" "$TARGET_DIR/postgres_data" "$TARGET_DIR/coturn" "$TARGET_DIR/livekit" "$TARGET_DIR/element-call"
 
     # Service Configuration
     echo -e "\n${ACCENT}>> Configuring services...${RESET}"
@@ -364,6 +364,10 @@ main_deployment() {
     echo -ne "Matrix Subdomain (e.g., matrix): ${WARNING}"
     read -r SUB_MATRIX
     echo -e "${RESET}"
+    echo -ne "Element Call Subdomain (e.g., call): ${WARNING}"
+    read -r SUB_CALL
+    echo -e "${RESET}"
+    SUB_CALL=${SUB_CALL:-call}
     
     while read -r -t 0; do read -r; done
     
@@ -377,12 +381,12 @@ main_deployment() {
     
     case $SERVERNAME_SELECT in
         1) SERVER_NAME="$DOMAIN"
-           echo -e "   ${INFO}User IDs will be: @username:${DOMAIN}${RESET}" ;;
+           echo -e "   ${INFO}User IDs will be: @username:${USER_ID_VALUE}${DOMAIN}${RESET}" ;;
         2) SERVER_NAME="$SUB_MATRIX.$DOMAIN"
-           echo -e "   ${INFO}User IDs will be: @username:${SUB_MATRIX}.${DOMAIN}${RESET}" ;;
+           echo -e "   ${INFO}User IDs will be: @username:${USER_ID_VALUE}${SUB_MATRIX}.${DOMAIN}${RESET}" ;;
         3) echo -ne "Enter custom server name: ${WARNING}"
            read -r SERVER_NAME
-           echo -e "${RESET}   ${INFO}User IDs will be: @username:${SERVER_NAME}${RESET}" ;;
+           echo -e "${RESET}   ${INFO}User IDs will be: @username:${USER_ID_VALUE}${SERVER_NAME}${RESET}" ;;
     esac
     
     echo -ne "Admin Username (e.g., admin): ${WARNING}"
@@ -419,7 +423,7 @@ main_deployment() {
     else
         ENABLE_REGISTRATION="false"
         ENABLE_REGISTRATION_WITHOUT_VERIFICATION="false"
-        echo -e "   ${SUCCESS}✓ Registration disabled - admin will create users manually${RESET}"
+        echo -e "   ${REGISTRATION_DISABLED}✓ Registration disabled - admin will create users manually${RESET}"
     fi
     
     echo -e "\n${ACCENT}Reverse Proxy Selection:${RESET}"
@@ -487,6 +491,13 @@ main_deployment() {
     echo -ne "Allow connections from local networks? (default: n): "
     read -r TURN_LAN_ACCESS
     TURN_LAN_ACCESS=${TURN_LAN_ACCESS:-n}
+    
+    # Display TURN LAN access choice with appropriate color
+    if [[ "$TURN_LAN_ACCESS" =~ ^[Yy]$ ]]; then
+        echo -e "   ${SUCCESS}✓ TURN LAN access: ENABLED${RESET} (local networks accessible)"
+    else
+        echo -e "   ${ERROR}✓ TURN LAN access: DISABLED${RESET} (secure - production recommended)"
+    fi
 
     # Generate Coturn Config
     echo -e "\n${ACCENT}>> Generating Coturn configuration...${RESET}"
@@ -596,7 +607,28 @@ LIVEKITEOF
     
     echo -e "   ${SUCCESS}✓ LiveKit config created${RESET}"
 
-    # Generate Docker Compose
+    # Generate Element Call Config
+    echo -e "\n${ACCENT}>> Generating Element Call configuration...${RESET}"
+    cat > "$TARGET_DIR/element-call/config.json" << 'ELEMENTCALLEOF'
+{
+    "default_server_config": {
+        "m.homeserver": {
+            "base_url": "https://REPLACE_MATRIX_DOMAIN",
+            "server_name": "REPLACE_SERVER_NAME"
+        }
+    },
+    "features": {
+        "feature_group_calls": true,
+        "feature_video_rooms": true
+    }
+}
+ELEMENTCALLEOF
+
+    sed -i "s/REPLACE_MATRIX_DOMAIN/$SUB_MATRIX.$DOMAIN/g" "$TARGET_DIR/element-call/config.json"
+    sed -i "s/REPLACE_SERVER_NAME/$SERVER_NAME/g" "$TARGET_DIR/element-call/config.json"
+    echo -e "   ${SUCCESS}✓ Element Call config created${RESET}"
+
+    # Generate Docker Compose (with Element Call)
     echo -e "\n${ACCENT}>> Generating Docker Compose configuration...${RESET}"
     cat > "$TARGET_DIR/compose.yaml" << 'COMPOSEEOF'
 services:
@@ -665,6 +697,16 @@ services:
     command: --config /etc/livekit.yaml
     volumes: [ "./livekit/livekit.yaml:/etc/livekit.yaml:ro" ]
     ports: [ "7880:7880", "7882:7882/udp", "50000-50050:50000-50050/udp" ]
+    networks: [ matrix-net ]
+    labels:
+      com.docker.compose.project: "matrix-stack"
+
+  element-call:
+    container_name: element-call
+    image: vectorim/element-web:latest
+    restart: unless-stopped
+    volumes: [ "./element-call/config.json:/app/config.json:ro" ]
+    ports: [ "8080:80" ]
     networks: [ matrix-net ]
     labels:
       com.docker.compose.project: "matrix-stack"
@@ -829,6 +871,20 @@ LKCONF
             echo -e "\n${SUCCESS}✓ No replacements needed${RESET}"
             echo -e "\n${WARNING}Press ENTER when complete...${RESET}"
             read -r
+            
+            clear
+            echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+            echo -e "${BANNER}│                NPM SETUP - ELEMENT CALL                      │${RESET}"
+            echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+            
+            echo -e "\n${ACCENT}Create Proxy Host in NPM:${RESET}"
+            echo -e "   Domain: ${INFO}$SUB_CALL.$DOMAIN${RESET}"
+            echo -e "   Forward to: ${INFO}http://$AUTO_LOCAL_IP:8080${RESET}"
+            echo -e "   Enable: Websockets, Block Exploits, SSL (Force HTTPS)\n"
+            
+            echo -e "\n${SUCCESS}✓ No advanced configuration needed${RESET}"
+            echo -e "\n${WARNING}Press ENTER when complete...${RESET}"
+            read -r
         fi
     elif [[ "$PROXY_TYPE" == "caddy" ]]; then
         echo -e "\n${ACCENT}Would you like guided setup for Caddy? (y/n):${RESET} "
@@ -864,6 +920,13 @@ $SUB_MATRIX.$DOMAIN {
 
 livekit.$DOMAIN {
     reverse_proxy $AUTO_LOCAL_IP:7880
+    header {
+        Access-Control-Allow-Origin *
+    }
+}
+
+$SUB_CALL.$DOMAIN {
+    reverse_proxy $AUTO_LOCAL_IP:8080
     header {
         Access-Control-Allow-Origin *
     }
@@ -905,6 +968,11 @@ http:
       service: livekit
       tls:
         certResolver: letsencrypt
+    element-call:
+      rule: "Host(\`$SUB_CALL.$DOMAIN\`)"
+      service: element-call
+      tls:
+        certResolver: letsencrypt
 
   services:
     matrix:
@@ -915,6 +983,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://$AUTO_LOCAL_IP:7880"
+    element-call:
+      loadBalancer:
+        servers:
+          - url: "http://$AUTO_LOCAL_IP:8080"
 
   middlewares:
     matrix-headers:
@@ -948,6 +1020,8 @@ ingress:
     service: http://$AUTO_LOCAL_IP:8008
   - hostname: livekit.$DOMAIN
     service: http://$AUTO_LOCAL_IP:7880
+  - hostname: $SUB_CALL.$DOMAIN
+    service: http://$AUTO_LOCAL_IP:8080
   - hostname: turn.$DOMAIN
     service: http://$AUTO_LOCAL_IP:3478
   - service: http_status:404
@@ -981,6 +1055,7 @@ draw_footer() {
     echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}     ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8009${RESET}"
     echo -e "   ${ACCESS_NAME}Matrix API (LAN):${RESET} ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8008${RESET}"
     echo -e "   ${ACCESS_NAME}Matrix API (WAN):${RESET} ${ACCESS_VALUE}https://$SUB_MATRIX.$DOMAIN${RESET}"
+    echo -e "   ${ACCESS_NAME}Element Call:${RESET}     ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8080${RESET} (LAN) / https://$SUB_CALL.$DOMAIN${RESET} (WAN)"
 
     echo -e "\n${ACCENT}═══════════════════════ INTERNAL SECRETS ════════════════════════${RESET}"
     echo -e "   ${SECRET_NAME}Postgres Pass:${RESET}   ${SECRET_VALUE}${DB_PASS}${RESET}"
@@ -995,18 +1070,21 @@ draw_footer() {
         MATRIX_STATUS="DNS ONLY"
         LIVEKIT_STATUS="DNS ONLY"
         TURN_STATUS="DNS ONLY"
+        ELEMENT_CALL_STATUS="DNS ONLY"
     elif [[ "$PROXY_TYPE" == "npm" ]] || [[ "$PROXY_TYPE" == "npmplus" ]] || [[ "$PROXY_TYPE" == "caddy" ]] || [[ "$PROXY_TYPE" == "traefik" ]]; then
         MATRIX_STATUS="PROXIED"
         LIVEKIT_STATUS="PROXIED"
         TURN_STATUS="DNS ONLY"
+        ELEMENT_CALL_STATUS="PROXIED"
     else
         MATRIX_STATUS="DNS ONLY"
         LIVEKIT_STATUS="DNS ONLY"
         TURN_STATUS="DNS ONLY"
+        ELEMENT_CALL_STATUS="DNS ONLY"
     fi
     
     echo -e "   ┌─────────────────┬───────────┬─────────────────┬─────────────────┐"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ " "HOSTNAME" "TYPE" "VALUE" "STATUS"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ %-15s │\n" "HOSTNAME" "TYPE" "VALUE" "STATUS"
     echo -e "   ├─────────────────┼───────────┼─────────────────┼─────────────────┤"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_MATRIX" "A" "$AUTO_PUBLIC_IP"
     if [[ "$MATRIX_STATUS" == "PROXIED" ]]; then
@@ -1026,16 +1104,24 @@ draw_footer() {
     else
         echo -e "${LIVEKIT_STATUS} │"
     fi
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_CALL" "A" "$AUTO_PUBLIC_IP"
+    if [[ "$ELEMENT_CALL_STATUS" == "PROXIED" ]]; then
+        echo -e "${DNS_STATUS_PROXIED}${ELEMENT_CALL_STATUS}${RESET} │"
+    else
+        echo -e "${ELEMENT_CALL_STATUS} │"
+    fi
     echo -e "   └─────────────────┴───────────┴─────────────────┴─────────────────┘"
 
     echo -e "\n${ACCENT}═══════════════════════ CONFIGURATION FILES ═══════════════════════${RESET}"
     echo -e "   ${INFO}• Coturn:${RESET}   ${CONFIG_PATH}${TARGET_DIR}/coturn/turnserver.conf${RESET}"
     echo -e "   ${INFO}• LiveKit:${RESET}  ${CONFIG_PATH}${TARGET_DIR}/livekit/livekit.yaml${RESET}"
     echo -e "   ${INFO}• Synapse:${RESET}  ${CONFIG_PATH}${TARGET_DIR}/synapse/homeserver.yaml${RESET}"
+    echo -e "   ${INFO}• Element Call:${RESET} ${CONFIG_PATH}${TARGET_DIR}/element-call/config.json${RESET}"
 
     echo -e "\n${ACCENT}════════════════════════ IMPORTANT NOTES ═════════════════════════${RESET}"
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Multiple simultaneous screenshares are now supported${RESET}"
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} LiveKit configured with increased track limits${RESET}"
+    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Element Call is available for video conferencing${RESET}"
     echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Test federation: https://federationtester.matrix.org${RESET}"
     echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  TURN must always be DNS ONLY - never proxy TURN traffic${RESET}"
     
@@ -1063,6 +1149,12 @@ PUBLIC_IP_COLOR='\033[1;94m'  # Light Blue
 LOCAL_IP_COLOR='\033[1;93m'   # Yellow/Gold
 DOCKER_COLOR='\033[1;34m'     # Medium Blue
 CHOICE_COLOR='\033[1;92m'     # Green
+REMOVED='\033[1;91m'          # Red for "Removed" text
+CONTAINER_NAME='\033[1;93m'   # Yellow for container names
+NETWORK_NAME='\033[1;92m'     # Green for network names
+USER_ID_VALUE='\033[1;94m'    # Blue for user ID values
+REGISTRATION_DISABLED='\033[1;91m'  # Red for registration disabled
+REGISTRATION_ENABLED='\033[1;92m'   # Green for registration enabled
 RESET='\033[0m'               # Reset to default
 
 # Access credentials colors
