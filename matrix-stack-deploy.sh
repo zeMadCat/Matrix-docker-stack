@@ -400,8 +400,22 @@ main_deployment() {
     
     if [[ "$ALLOW_REGISTRATION" =~ ^[Yy]$ ]]; then
         ENABLE_REGISTRATION="true"
-        ENABLE_REGISTRATION_WITHOUT_VERIFICATION="true"
-        echo -e "   ${WARNING}⚠️  Warning: Public registration enabled - consider adding email or captcha verification${RESET}"
+        echo -e "\n${ACCENT}Email Verification Configuration:${RESET}"
+        echo -e "   ${WARNING}To prevent spam and abuse, you can require email verification for new registrations.${RESET}"
+        echo -e "   • ${SUCCESS}Enable email verification (y):${RESET} Users must verify email before they can log in"
+        echo -e "   • ${ERROR}Disable email verification (n):${RESET} Users can register and use immediately (less secure)"
+        echo -ne "Require email verification for new users? (default: y): "
+        read -r REQUIRE_EMAIL_VERIFICATION
+        REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION:-y}
+        
+        if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then
+            ENABLE_REGISTRATION_WITHOUT_VERIFICATION="false"
+            echo -e "   ${SUCCESS}✓ Email verification enabled - users must verify email address${RESET}"
+            echo -e "   ${INFO}ℹ  Note: You'll need to configure email settings in homeserver.yaml later${RESET}"
+        else
+            ENABLE_REGISTRATION_WITHOUT_VERIFICATION="true"
+            echo -e "   ${WARNING}⚠️  Warning: Public registration enabled without verification - consider adding captcha${RESET}"
+        fi
     else
         ENABLE_REGISTRATION="false"
         ENABLE_REGISTRATION_WITHOUT_VERIFICATION="false"
@@ -957,23 +971,23 @@ draw_footer() {
     echo -e "${SUCCESS}└──────────────────────────────────────────────────────────────┘${RESET}"
     
     echo -e "\n${ACCENT}═══════════════════════ ACCESS CREDENTIALS ═══════════════════════${RESET}"
-    echo -e "   ${INFO}Matrix Server:${RESET}   ${SERVER_NAME}"
-    echo -e "   ${INFO}Admin User:${RESET}      ${ADMIN_USER}"
+    echo -e "   ${ACCESS_NAME}Matrix Server:${RESET}   ${ACCESS_VALUE}${SERVER_NAME}${RESET}"
+    echo -e "   ${ACCESS_NAME}Admin User:${RESET}      ${ACCESS_VALUE}${ADMIN_USER}${RESET}"
     if [ "$PASS_IS_CUSTOM" = true ]; then
-        echo -e "   ${INFO}Admin Pass:${RESET}      [Your custom password]"
+        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}      ${ACCESS_VALUE}[Your custom password]${RESET}"
     else
-        echo -e "   ${INFO}Admin Pass:${RESET}      ${ADMIN_PASS}"
+        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}      ${ACCESS_VALUE}${ADMIN_PASS}${RESET}"
     fi
-    echo -e "   ${INFO}Admin Panel:${RESET}     http://$AUTO_LOCAL_IP:8009"
-    echo -e "   ${INFO}Matrix API (LAN):${RESET} http://$AUTO_LOCAL_IP:8008"
-    echo -e "   ${INFO}Matrix API (WAN):${RESET} https://$SUB_MATRIX.$DOMAIN"
+    echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}     ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8009${RESET}"
+    echo -e "   ${ACCESS_NAME}Matrix API (LAN):${RESET} ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8008${RESET}"
+    echo -e "   ${ACCESS_NAME}Matrix API (WAN):${RESET} ${ACCESS_VALUE}https://$SUB_MATRIX.$DOMAIN${RESET}"
 
     echo -e "\n${ACCENT}═══════════════════════ INTERNAL SECRETS ════════════════════════${RESET}"
-    echo -e "   ${INFO}Postgres Pass:${RESET}   ${DB_PASS}"
-    echo -e "   ${INFO}Shared Secret:${RESET}   ${REG_SECRET}"
-    echo -e "   ${INFO}TURN Secret:${RESET}     ${TURN_SECRET}"
-    echo -e "   ${INFO}Livekit API Key:${RESET} ${LK_API_KEY}"
-    echo -e "   ${INFO}Livekit Secret:${RESET}  ${LK_API_SECRET}"
+    echo -e "   ${SECRET_NAME}Postgres Pass:${RESET}   ${SECRET_VALUE}${DB_PASS}${RESET}"
+    echo -e "   ${SECRET_NAME}Shared Secret:${RESET}   ${SECRET_VALUE}${REG_SECRET}${RESET}"
+    echo -e "   ${SECRET_NAME}TURN Secret:${RESET}     ${SECRET_VALUE}${TURN_SECRET}${RESET}"
+    echo -e "   ${SECRET_NAME}Livekit API Key:${RESET} ${SECRET_VALUE}${LK_API_KEY}${RESET}"
+    echo -e "   ${SECRET_NAME}Livekit Secret:${RESET}  ${SECRET_VALUE}${LK_API_SECRET}${RESET}"
 
     echo -e "\n${ACCENT}═════════════════════════ DNS RECORDS ═══════════════════════════${RESET}"
     
@@ -992,28 +1006,43 @@ draw_footer() {
     fi
     
     echo -e "   ┌─────────────────┬───────────┬─────────────────┬─────────────────┐"
-    printf "   │ %-15s │ %-9s │ %-15s │ %-15s │\n" "HOSTNAME" "TYPE" "VALUE" "STATUS"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ " "HOSTNAME" "TYPE" "VALUE" "STATUS"
     echo -e "   ├─────────────────┼───────────┼─────────────────┼─────────────────┤"
-    printf "   │ %-15s │ %-9s │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ %-15s │\n" "$SUB_MATRIX" "A" "$AUTO_PUBLIC_IP" "$MATRIX_STATUS"
-    printf "   │ %-15s │ %-9s │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ %-15s │\n" "turn" "A" "$AUTO_PUBLIC_IP" "$TURN_STATUS"
-    printf "   │ %-15s │ %-9s │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ %-15s │\n" "livekit" "A" "$AUTO_PUBLIC_IP" "$LIVEKIT_STATUS"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_MATRIX" "A" "$AUTO_PUBLIC_IP"
+    if [[ "$MATRIX_STATUS" == "PROXIED" ]]; then
+        echo -e "${DNS_STATUS_PROXIED}${MATRIX_STATUS}${RESET} │"
+    else
+        echo -e "${MATRIX_STATUS} │"
+    fi
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "turn" "A" "$AUTO_PUBLIC_IP"
+    if [[ "$TURN_STATUS" == "PROXIED" ]]; then
+        echo -e "${DNS_STATUS_PROXIED}${TURN_STATUS}${RESET} │"
+    else
+        echo -e "${TURN_STATUS} │"
+    fi
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "livekit" "A" "$AUTO_PUBLIC_IP"
+    if [[ "$LIVEKIT_STATUS" == "PROXIED" ]]; then
+        echo -e "${DNS_STATUS_PROXIED}${LIVEKIT_STATUS}${RESET} │"
+    else
+        echo -e "${LIVEKIT_STATUS} │"
+    fi
     echo -e "   └─────────────────┴───────────┴─────────────────┴─────────────────┘"
 
     echo -e "\n${ACCENT}═══════════════════════ CONFIGURATION FILES ═══════════════════════${RESET}"
-    echo -e "   ${INFO}• Coturn:${RESET}   ${TARGET_DIR}/coturn/turnserver.conf"
-    echo -e "   ${INFO}• LiveKit:${RESET}  ${TARGET_DIR}/livekit/livekit.yaml"
-    echo -e "   ${INFO}• Synapse:${RESET}  ${TARGET_DIR}/synapse/homeserver.yaml"
+    echo -e "   ${INFO}• Coturn:${RESET}   ${CONFIG_PATH}${TARGET_DIR}/coturn/turnserver.conf${RESET}"
+    echo -e "   ${INFO}• LiveKit:${RESET}  ${CONFIG_PATH}${TARGET_DIR}/livekit/livekit.yaml${RESET}"
+    echo -e "   ${INFO}• Synapse:${RESET}  ${CONFIG_PATH}${TARGET_DIR}/synapse/homeserver.yaml${RESET}"
 
     echo -e "\n${ACCENT}════════════════════════ IMPORTANT NOTES ═════════════════════════${RESET}"
-    echo -e "   ${SUCCESS}✓${RESET} Multiple simultaneous screenshares are now supported"
-    echo -e "   ${SUCCESS}✓${RESET} LiveKit configured with increased track limits"
-    echo -e "   ${INFO}ℹ${RESET}  Test federation: https://federationtester.matrix.org"
-    echo -e "   ${WARNING}⚠️${RESET}  TURN must always be DNS ONLY - never proxy TURN traffic"
+    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Multiple simultaneous screenshares are now supported${RESET}"
+    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} LiveKit configured with increased track limits${RESET}"
+    echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Test federation: https://federationtester.matrix.org${RESET}"
+    echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  TURN must always be DNS ONLY - never proxy TURN traffic${RESET}"
     
     if [[ "$TURN_LAN_ACCESS" =~ ^[Yy]$ ]]; then
-        echo -e "   ${WARNING}⚠️${RESET}  TURN LAN: ${SUCCESS}ENABLED${RESET} (local networks accessible)"
+        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  TURN LAN: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (local networks accessible)${RESET}"
     else
-        echo -e "   ${SUCCESS}✓${RESET}  TURN LAN: ${ERROR}DISABLED${RESET} (secure - production recommended)"
+        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  TURN LAN: ${ERROR}DISABLED${RESET}${NOTE_TEXT} (secure - production recommended)${RESET}"
     fi
 
     echo -e "\n${WARNING}══════════════════════════════════════════════════════════════════${RESET}"
@@ -1035,6 +1064,26 @@ LOCAL_IP_COLOR='\033[1;93m'   # Yellow/Gold
 DOCKER_COLOR='\033[1;34m'     # Medium Blue
 CHOICE_COLOR='\033[1;92m'     # Green
 RESET='\033[0m'               # Reset to default
+
+# Access credentials colors
+ACCESS_NAME='\033[1;92m'      # Green for names
+ACCESS_VALUE='\033[1;93m'     # Yellow for values
+
+# Internal secrets colors
+SECRET_NAME='\033[1;94m'      # Blue for names
+SECRET_VALUE='\033[1;97m'     # White for values
+
+# DNS records colors
+DNS_HOSTNAME='\033[1;93m'     # Yellow for hostnames
+DNS_TYPE='\033[1;91m'         # Red for type
+DNS_STATUS_PROXIED='\033[1;93m' # Yellow for PROXIED status
+
+# Config files colors
+CONFIG_PATH='\033[1;93m'      # Yellow for paths
+
+# Important notes colors
+NOTE_ICON='\033[1;93m'        # Yellow for icons
+NOTE_TEXT='\033[1;97m'        # White for text
 
 # Start deployment
 main_deployment "$1"
