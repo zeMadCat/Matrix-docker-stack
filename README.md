@@ -70,9 +70,9 @@ After deployment, it shows you all credentials, secrets, DNS records, and config
 │                          by MadCat                           │
 │                            v1.0                              │
 │                                                              │
-│                     Included Components:                     │
-│                  • Synapse • LiveKit • Coturn                │
-│               • PostgreSQL • Synapse-Admin • Element Call    │
+│                    Included Components:                      │
+│               • Synapse • LiveKit • Coturn                   │
+│         • PostgreSQL • Synapse-Admin • Element Call          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
