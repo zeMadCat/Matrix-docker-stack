@@ -1049,14 +1049,14 @@ draw_footer() {
     echo -e "${SUCCESS}└──────────────────────────────────────────────────────────────┘${RESET}"
     
     echo -e "\n${ACCENT}═══════════════════════ ACCESS CREDENTIALS ═══════════════════════${RESET}"
-    echo -e "   ${ACCESS_NAME}Matrix Server:${RESET}   ${ACCESS_VALUE}${SERVER_NAME}${RESET}"
-    echo -e "   ${ACCESS_NAME}Admin User:${RESET}      ${ACCESS_VALUE}${ADMIN_USER}${RESET}"
+    echo -e "   ${ACCESS_NAME}Matrix Server:${RESET}    ${ACCESS_VALUE}${SERVER_NAME}${RESET}"
+    echo -e "   ${ACCESS_NAME}Admin User:${RESET}       ${ACCESS_VALUE}${ADMIN_USER}${RESET}"
     if [ "$PASS_IS_CUSTOM" = true ]; then
-        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}      ${ACCESS_VALUE}[Your custom password]${RESET}"
+        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}       ${ACCESS_VALUE}[Your custom password]${RESET}"
     else
-        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}      ${ACCESS_VALUE}${ADMIN_PASS}${RESET}"
+        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}       ${ACCESS_VALUE}${ADMIN_PASS}${RESET}"
     fi
-    echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}     ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8009${RESET}"
+    echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}      ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8009${RESET}"
     echo -e "   ${ACCESS_NAME}Matrix API (LAN):${RESET} ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8008${RESET}"
     echo -e "   ${ACCESS_NAME}Matrix API (WAN):${RESET} ${ACCESS_VALUE}https://$SUB_MATRIX.$DOMAIN${RESET}"
     echo -e "   ${ACCESS_NAME}Element Call:${RESET}     ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8080${RESET} (LAN) / https://$SUB_CALL.$DOMAIN${RESET} (WAN)"
@@ -1098,19 +1098,19 @@ draw_footer() {
     fi
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "turn" "A" "$AUTO_PUBLIC_IP"
     if [[ "$TURN_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${TURN_STATUS}${RESET} │"
+        echo -e "${DNS_STATUS_PROXIED}${TURN_STATUS}${RESET}  │"
     else
         echo -e "${TURN_STATUS} │"
     fi
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "livekit" "A" "$AUTO_PUBLIC_IP"
     if [[ "$LIVEKIT_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${LIVEKIT_STATUS}${RESET} │"
+        echo -e "${DNS_STATUS_PROXIED}${LIVEKIT_STATUS}${RESET}  │"
     else
         echo -e "${LIVEKIT_STATUS} │"
     fi
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_CALL" "A" "$AUTO_PUBLIC_IP"
     if [[ "$ELEMENT_CALL_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${ELEMENT_CALL_STATUS}${RESET} │"
+        echo -e "${DNS_STATUS_PROXIED}${ELEMENT_CALL_STATUS}${RESET}  │"
     else
         echo -e "${ELEMENT_CALL_STATUS} │"
     fi
