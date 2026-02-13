@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =================================================================
-# TITLE: MATRIX STACK DEPLOYER (FINAL)
+# TITLE: MATRIX STACK DEPLOYER (FINAL - STABLE)
 # COMMAND: /final
-# STATUS: 1:1 RESTORATION | HIGH-RESPONSE CHECK | ERROR GUIDANCE
+# STATUS: ALIGNED UI | SYNTAX FIXED | HIGH-RESPONSE CHECK
 # =================================================================
 
 # --- [ UI & COLOR COMPONENTS ] ---
@@ -50,15 +50,6 @@ main_deployment() {
             cd /opt/dockge && curl https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output compose.yaml
             docker compose up -d && cd - > /dev/null
             DOCKGE_FOUND=true
-            DOCKER_READY=true
-        fi
-    fi
-
-    if [ "$DOCKER_READY" = false ] && [ "$DOCKGE_FOUND" = false ]; then
-        read -p "Docker Engine missing. Install official Docker now? (y/n): " INST_DOCKER
-        if [[ "$INST_DOCKER" =~ ^[Yy]$ ]]; then
-            curl -fsSL https://get.docker.com | sh
-            systemctl enable --now docker
             DOCKER_READY=true
         fi
     fi
@@ -205,7 +196,6 @@ EOF
 
     echo -ne "\n${WARNING}>> Waiting for Synapse readiness (2s Polling)...${RESET}"
     TRIES=0
-    # Restored until loop with optimized curl and 2s sleep
     until curl -sL --fail http://localhost:8008 | grep -qi "It works"; do
         echo -ne "."
         sleep 2
@@ -241,13 +231,14 @@ draw_footer() {
     echo -e "   Livekit Secret:  ${INFO}$LK_API_SECRET${RESET}"
 
     echo -e "\n${ACCENT}3. CLOUDFLARE DNS SETUP${RESET}"
-    echo -e "   ┌───────────────┬───────────┬───────────────┬────────────────┐"
-    echo -e "   │ HOSTNAME      │ TYPE      │ VALUE         │ PROXY STATUS   │"
-    echo -e "   ├───────────────┼───────────┼───────────────┼────────────────┤"
-    echo -e "   │ $SUB_MATRIX     │ A         │ $AUTO_PUBLIC_IP  │ PROXIED (ON)   │"
-    echo -e "   │ turn          │ A         │ $AUTO_PUBLIC_IP  │ DNS ONLY (OFF) │"
-    echo -e "   │ livekit       │ A         │ $AUTO_PUBLIC_IP  │ DNS ONLY (OFF) │"
-    └───────────────┴───────────┴───────────────┴────────────────┘
+    # Using printf for perfect column alignment
+    echo -e "   ┌───────────────┬───────────┬─────────────────┬────────────────┐"
+    printf "   │ %-13s │ %-9s │ %-15s │ %-14s │\n" "HOSTNAME" "TYPE" "VALUE" "PROXY STATUS"
+    echo -e "   ├───────────────┼───────────┼─────────────────┼────────────────┤"
+    printf "   │ %-13s │ %-9s │ %-15s │ %-14s │\n" "$SUB_MATRIX" "A" "$AUTO_PUBLIC_IP" "PROXIED (ON)"
+    printf "   │ %-13s │ %-9s │ %-15s │ %-14s │\n" "turn" "A" "$AUTO_PUBLIC_IP" "DNS ONLY (OFF)"
+    printf "   │ %-13s │ %-9s │ %-15s │ %-14s │\n" "livekit" "A" "$AUTO_PUBLIC_IP" "DNS ONLY (OFF)"
+    echo -e "   └───────────────┴───────────┴─────────────────┴────────────────┘"
 
     echo -e "\n${ACCENT}4. NGINX PROXY MANAGER (NPM) FORWARDING${RESET}"
     echo -e "   • ${INFO}$SUB_MATRIX.$DOMAIN${RESET}  ->  ${INFO}http://$AUTO_LOCAL_IP:8008${RESET}"
