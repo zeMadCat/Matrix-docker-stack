@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # =================================================================
-# TITLE: MATRIX STACK DEPLOYER (EXPERIMENTAL)
+# TITLE: MATRIX STACK DEPLOYER (FINAL)
 # COMMAND: /final
-# STATUS: 1:1 LOGIC | IP CONFIRMATION | BOUNDARY LOGS | COLOR MAP
+# STATUS: 1:1 RESTORATION | HIGH-RESPONSE CHECK | ERROR GUIDANCE
 # =================================================================
 
-# --- [ 0. COLOR & UI MAPPING ] ---
+# --- [ UI & COLOR COMPONENTS ] ---
 BANNER='\033[1;95m'; ACCENT='\033[1;96m'; WARNING='\033[1;93m'
 SUCCESS='\033[1;92m'; ERROR='\033[1;91m'; INFO='\033[1;97m'; RESET='\033[0m'
 
@@ -22,21 +22,18 @@ main_deployment() {
 
     draw_header
     
-    # --- [ 1. VERBOSE SELECTION ] ---
-    read -p "Enable Verbose Logging? (Locked 10-line window) (y/n): " VERBOSE_CHOICE
-    VERBOSE=false
-    [[ "$VERBOSE_CHOICE" =~ ^[Yy]$ ]] && VERBOSE=true
-
-    # --- [ 2. SYSTEM AUDIT ] ---
+    # --- [ 1. SYSTEM AUDIT ] ---
     echo -e "\n${ACCENT}>> Auditing System Environment...${RESET}"
     DOCKER_READY=false
     if command -v docker >/dev/null 2>&1; then
         echo -e "   • Docker:          ${SUCCESS}Found${RESET} ($(docker --version | awk '{print $3}' | tr -d ','))"
         DOCKER_READY=true
     fi
+
     if docker compose version >/dev/null 2>&1; then
         echo -e "   • Docker Compose:  ${SUCCESS}Found${RESET} ($(docker compose version | awk '{print $4}'))"
     else
+        echo -e "   • Docker Compose:  ${ERROR}Not Found${RESET}"
         DOCKER_READY=false
     fi
 
@@ -44,9 +41,29 @@ main_deployment() {
     if [ -n "$(docker ps -qf name=dockge 2>/dev/null)" ] || [ -d "/opt/stacks" ]; then
         echo -e "   • Dockge:          ${SUCCESS}Detected${RESET}"
         DOCKGE_FOUND=true
+    else
+        echo -e "   • Dockge:          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
+        read -p "Install Dockge (includes Docker & Compose)? (y/n): " INST_DOCKGE
+        if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
+            curl -fsSL https://get.docker.com | sh
+            mkdir -p /opt/dockge /opt/stacks
+            cd /opt/dockge && curl https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output compose.yaml
+            docker compose up -d && cd - > /dev/null
+            DOCKGE_FOUND=true
+            DOCKER_READY=true
+        fi
     fi
 
-    # --- [ 3. NETWORK DISCOVERY & CONFIRMATION ] ---
+    if [ "$DOCKER_READY" = false ] && [ "$DOCKGE_FOUND" = false ]; then
+        read -p "Docker Engine missing. Install official Docker now? (y/n): " INST_DOCKER
+        if [[ "$INST_DOCKER" =~ ^[Yy]$ ]]; then
+            curl -fsSL https://get.docker.com | sh
+            systemctl enable --now docker
+            DOCKER_READY=true
+        fi
+    fi
+
+    # --- [ 2. NETWORK DISCOVERY & CONFIRMATION ] ---
     echo -e "\n${WARNING}>> Verifying Network Parameters...${RESET}"
     RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org || curl -sL --max-time 5 https://ifconfig.me/ip)
     DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
@@ -66,7 +83,7 @@ main_deployment() {
 
     CUR_DIR=$(pwd)
 
-    # --- [ 4. WEIGHTED 3-WAY PATH SELECTION ] ---
+    # --- [ 3. WEIGHTED 3-WAY PATH SELECTION ] ---
     echo -e "\n${ACCENT}[ STEP 1 ] Infrastructure & Location${RESET}"
     if [ "$DOCKGE_FOUND" = true ]; then
         echo -e "   1) ${SUCCESS}Dockge Path (Recommended):${RESET} /opt/stacks/matrix-stack"
@@ -101,7 +118,7 @@ main_deployment() {
 
     mkdir -p "$TARGET_DIR/synapse" "$TARGET_DIR/postgres_data" "$TARGET_DIR/coturn" "$TARGET_DIR/livekit"
 
-    # --- [ 5. SERVICE CONFIGURATION ] ---
+    # --- [ 4. SERVICE CONFIGURATION ] ---
     echo -e "\n${ACCENT}[ STEP 2 ] Service Configuration${RESET}"
     read -p "Base Domain (e.g., example.com): " DOMAIN
     read -p "Matrix Subdomain (e.g., matrix): " SUB_MATRIX
@@ -112,7 +129,7 @@ main_deployment() {
     TURN_SECRET=$(openssl rand -hex 32); REG_SECRET=$(openssl rand -hex 32)
     LK_API_KEY=$(openssl rand -hex 16); LK_API_SECRET=$(openssl rand -hex 32)
 
-    # --- [ 6. COMPOSE GENERATION ] ---
+    # --- [ 5. COMPOSE GENERATION ] ---
     cat <<EOF > $TARGET_DIR/compose.yaml
 services:
   postgres:
@@ -179,46 +196,28 @@ networks:
     name: matrix-net
 EOF
 
-    # Config Gen
     docker run --rm -v "$TARGET_DIR/synapse:/data" -e SYNAPSE_SERVER_NAME="$SUB_MATRIX.$DOMAIN" -e SYNAPSE_REPORT_STATS=yes matrixdotorg/synapse:latest generate > /dev/null 2>&1
     chown -R 991:991 "$TARGET_DIR/synapse"
 
-    # --- [ 7. DEPLOY & BOUNDARY-LOCKED VERBOSE WINDOW ] ---
+    # --- [ 6. DEPLOY & HIGH-RESPONSE READINESS ] ---
     echo -e "${SUCCESS}>> Launching Stack...${RESET}"
     cd "$TARGET_DIR" && docker compose up -d
 
-    if [ "$VERBOSE" = true ]; then
-        echo -e "${INFO}>> VERBOSE START [Synapse Logs]${RESET}"
-        until [ "$(docker ps -a -q -f name=synapse)" ]; do sleep 1; done
-        for i in {1..10}; do echo -e "${INFO}  |${RESET}"; done
-        echo -e "${INFO}>> VERBOSE END${RESET}"
-        
-        (while true; do
-            echo -ne "\033[11A"
-            docker logs synapse --tail 10 2>&1 | while read logline; do
-                echo -ne "\033[K"
-                echo -e "${INFO}  | ${logline:0:110}${RESET}"
-            done
-            sleep 2
-        done) &
-        LOG_PID=$!
-    fi
-
-    echo -ne "\n${WARNING}>> Waiting for URL: \"It works! Synapse is running\"${RESET}"
+    echo -ne "\n${WARNING}>> Waiting for Synapse readiness (2s Polling)...${RESET}"
     TRIES=0
-    until $(curl -s --fail http://localhost:8008 | grep -q "It works"); do
+    # Restored until loop with optimized curl and 2s sleep
+    until curl -sL --fail http://localhost:8008 | grep -qi "It works"; do
         echo -ne "."
-        sleep 5
+        sleep 2
         ((TRIES++))
-        [[ $TRIES -gt 60 ]] && { [ ! -z "$LOG_PID" ] && kill $LOG_PID; exit 1; }
+        if [[ $TRIES -gt 150 ]]; then
+            echo -e "\n\n${ERROR}[!] ERROR: Synapse failed to start.${RESET}"
+            echo -e "${INFO}Check logs with: ${ACCENT}docker logs -f synapse${RESET}"
+            exit 1
+        fi
     done
 
-    # --- [ KILL SWITCH ] ---
-    if [ ! -z "$LOG_PID" ]; then 
-        kill $LOG_PID > /dev/null 2>&1
-        echo -e "\n${SUCCESS}[!] Synapse detected online. Log window closed.${RESET}"
-    fi
-
+    echo -e "\n${SUCCESS}>> Synapse is ONLINE. Registering Admin user...${RESET}"
     docker exec synapse register_new_matrix_user -c /data/homeserver.yaml -u "$ADMIN_USER" -p "$ADMIN_PASS" --admin http://localhost:8008
     draw_footer
 }
@@ -248,7 +247,7 @@ draw_footer() {
     echo -e "   │ $SUB_MATRIX     │ A         │ $AUTO_PUBLIC_IP  │ PROXIED (ON)   │"
     echo -e "   │ turn          │ A         │ $AUTO_PUBLIC_IP  │ DNS ONLY (OFF) │"
     echo -e "   │ livekit       │ A         │ $AUTO_PUBLIC_IP  │ DNS ONLY (OFF) │"
-    echo -e "   └───────────────┴───────────┴───────────────┴────────────────┘"
+    └───────────────┴───────────┴───────────────┴────────────────┘
 
     echo -e "\n${ACCENT}4. NGINX PROXY MANAGER (NPM) FORWARDING${RESET}"
     echo -e "   • ${INFO}$SUB_MATRIX.$DOMAIN${RESET}  ->  ${INFO}http://$AUTO_LOCAL_IP:8008${RESET}"
