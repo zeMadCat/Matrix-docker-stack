@@ -11,11 +11,11 @@ draw_header() {
     echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BANNER}│              MATRIX SYNAPSE FULL STACK DEPLOYER              │${RESET}"
     echo -e "${BANNER}│                          by MadCat                           │${RESET}"
-    echo -e "${BANNER}│                            v${gitv}                              │${RESET}"
+    echo -e "${BANNER}│                            v1.0                              │${RESET}"
     echo -e "${BANNER}│                                                              │${RESET}"
-    echo -e "${BANNER}│                    Included Components:                     │${RESET}"
-    echo -e "${BANNER}│                • Synapse • PostgreSQL • Coturn               │${RESET}"
-    echo -e "${BANNER}│              • LiveKit • Synapse-Admin • Element Call        │${RESET}"
+    echo -e "${BANNER}│                    Included Components:                      │${RESET}"
+    echo -e "${BANNER}│               • Synapse • LiveKit • Coturn                   │${RESET}"
+    echo -e "${BANNER}│         • PostgreSQL • Synapse-Admin • Element Call          │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -77,6 +77,135 @@ check_for_updates() {
     return 0
 }
 
+# Function to setup log rotation
+setup_log_rotation() {
+    echo -e "\n${ACCENT}>> Setting up log rotation for Docker containers...${RESET}"
+    
+    # Create logrotate configuration for Docker containers
+    cat > /etc/logrotate.d/docker-containers << 'LOGROTATEEOF'
+/var/lib/docker/containers/*/*.log {
+    rotate 7
+    daily
+    compress
+    missingok
+    delaycompress
+    copytruncate
+    maxsize 100M
+}
+LOGROTATEEOF
+
+    # Create specific configuration for Matrix stack logs
+    cat > /etc/logrotate.d/matrix-stack << 'MATRIXLOGROTATEEOF'
+/opt/stacks/matrix-stack/**/*.log {
+    rotate 7
+    daily
+    compress
+    missingok
+    delaycompress
+    copytruncate
+    maxsize 100M
+    create 0644 root root
+}
+MATRIXLOGROTATEEOF
+
+    # Configure system-wide log rotation settings
+    cat > /etc/logrotate.conf << 'LOGROTATECONF'
+# System-wide logrotate configuration
+
+# Rotate log files weekly
+weekly
+
+# Keep 4 weeks worth of backlogs
+rotate 4
+
+# Create new log files after rotation
+create
+
+# Use date as suffix of rotated files
+dateext
+
+# Compress rotated files
+compress
+
+# Delay compression until next rotation cycle
+delaycompress
+
+# Do not rotate empty logs
+notifempty
+
+# Include system-specific configurations
+include /etc/logrotate.d
+
+# System-specific logs can be configured here
+/var/log/syslog {
+    rotate 7
+    daily
+    missingok
+    notifempty
+    delaycompress
+    compress
+    postrotate
+        invoke-rc.d rsyslog rotate > /dev/null 2>&1 || true
+    endscript
+}
+
+/var/log/messages {
+    rotate 7
+    daily
+    missingok
+    notifempty
+    delaycompress
+    compress
+}
+LOGROTATECONF
+
+    # Test the configuration
+    if logrotate -d /etc/logrotate.conf > /dev/null 2>&1; then
+        echo -e "   ${SUCCESS}✓ Log rotation configured successfully${RESET}"
+        
+        # Force an immediate rotation to test
+        logrotate -f /etc/logrotate.conf > /dev/null 2>&1 || true
+        
+        # Setup cron job for more frequent rotation if needed
+        cat > /etc/cron.daily/logrotate << 'CRONEOF'
+#!/bin/sh
+/usr/sbin/logrotate /etc/logrotate.conf
+if [ $? -ne 0 ]; then
+    logger -t logrotate "Log rotation failed"
+fi
+CRONEOF
+        chmod +x /etc/cron.daily/logrotate
+        
+        echo -e "   ${INFO}ℹ  Daily log rotation scheduled via cron${RESET}"
+        
+        # Configure Docker daemon for better log handling
+        if [ -f /etc/docker/daemon.json ]; then
+            # Backup existing configuration
+            cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
+        fi
+        
+        # Update Docker daemon configuration for log rotation
+        cat > /etc/docker/daemon.json << 'DOCKERDAEMONEOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m",
+    "max-file": "3"
+  }
+}
+DOCKERDAEMONEOF
+        
+        # Restart Docker to apply changes
+        systemctl restart docker
+        echo -e "   ${INFO}ℹ  Docker configured with log rotation (max-size 100m, max-file 3)${RESET}"
+        
+        return 0
+    else
+        echo -e "   ${ERROR}✗ Failed to configure log rotation${RESET}"
+        return 1
+    fi
+}
+
 # Main deployment function
 main_deployment() {
     [[ $EUID -ne 0 ]] && { echo -e "${ERROR}[!] Run as root (sudo).${RESET}"; exit 1; }
@@ -105,15 +234,20 @@ main_deployment() {
     fi
 
     echo -e "\n${ACCENT}>> Installing required dependencies...${RESET}"
-    local deps=("curl" "wget" "openssl" "jq")
+    local deps=("curl" "wget" "openssl" "jq" "logrotate")
     local coreutils_check=$(dpkg-query -W -f='${Status}' coreutils 2>/dev/null | grep -c "ok installed" || echo "0")
     local to_install=()
     
     for dep in "${deps[@]}"; do
-        if ! command -v "$dep" >/dev/null 2>&1; then
+        if ! command -v "$dep" >/dev/null 2>&1 && [ "$dep" != "logrotate" ]; then
             to_install+=("$dep")
         fi
     done
+    
+    # Check if logrotate is installed
+    if ! command -v logrotate >/dev/null 2>&1 && ! dpkg-query -W -f='${Status}' logrotate 2>/dev/null | grep -q "ok installed"; then
+        to_install+=("logrotate")
+    fi
     
     if [ "$coreutils_check" -eq 0 ]; then
         to_install+=("coreutils")
@@ -417,9 +551,10 @@ main_deployment() {
         REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION:-y}
         
         if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then
-            ENABLE_REGISTRATION_WITHOUT_VERIFICATION="false"
+            ENABLE_REGISTRATION_WITHOUT_VERIFICATION="true"
             echo -e "   ${SUCCESS}✓ Email verification enabled - users must verify email address${RESET}"
             echo -e "   ${INFO}ℹ  Note: You'll need to configure email settings in homeserver.yaml later${RESET}"
+            echo -e "   ${WARNING}⚠️  Note: Email verification requires email server configuration to actually work${RESET}"
         else
             ENABLE_REGISTRATION_WITHOUT_VERIFICATION="true"
             echo -e "   ${WARNING}⚠️  Warning: Public registration enabled without verification - consider adding captcha${RESET}"
@@ -431,21 +566,19 @@ main_deployment() {
     fi
     
     echo -e "\n${ACCENT}Reverse Proxy Selection:${RESET}"
-    echo -e "   ${CHOICE_COLOR}1)${RESET} Nginx Proxy Manager (NPM)"
-    echo -e "   ${CHOICE_COLOR}2)${RESET} Nginx Proxy Manager Plus (NPM Plus)"
-    echo -e "   ${CHOICE_COLOR}3)${RESET} Caddy"
-    echo -e "   ${CHOICE_COLOR}4)${RESET} Traefik"
-    echo -e "   ${CHOICE_COLOR}5)${RESET} Cloudflare Tunnel"
-    echo -e "   ${CHOICE_COLOR}6)${RESET} Manual Setup"
-    echo -ne "Selection (1-6): "
+    echo -e "   ${CHOICE_COLOR}1)${RESET} Nginx Proxy Manager (NPM/NPMPlus)"
+    echo -e "   ${CHOICE_COLOR}2)${RESET} Caddy"
+    echo -e "   ${CHOICE_COLOR}3)${RESET} Traefik"
+    echo -e "   ${CHOICE_COLOR}4)${RESET} Cloudflare Tunnel"
+    echo -e "   ${CHOICE_COLOR}5)${RESET} Manual Setup"
+    echo -ne "Selection (1-5): "
     read -r PROXY_SELECT
     
     case $PROXY_SELECT in
         1) PROXY_TYPE="npm" ;;
-        2) PROXY_TYPE="npmplus" ;;
-        3) PROXY_TYPE="caddy" ;;
-        4) PROXY_TYPE="traefik" ;;
-        5) PROXY_TYPE="cloudflare" ;;
+        2) PROXY_TYPE="caddy" ;;
+        3) PROXY_TYPE="traefik" ;;
+        4) PROXY_TYPE="cloudflare" ;;
         *) PROXY_TYPE="manual" ;;
     esac
     
@@ -632,7 +765,7 @@ ELEMENTCALLEOF
     sed -i "s/REPLACE_SERVER_NAME/$SERVER_NAME/g" "$TARGET_DIR/element-call/config.json"
     echo -e "   ${SUCCESS}✓ Element Call config created${RESET}"
 
-    # Generate Docker Compose (with Element Call)
+    # Generate Docker Compose (with Element Call on port 8007)
     echo -e "\n${ACCENT}>> Generating Docker Compose configuration...${RESET}"
     cat > "$TARGET_DIR/compose.yaml" << 'COMPOSEEOF'
 services:
@@ -710,7 +843,7 @@ services:
     image: vectorim/element-web:latest
     restart: unless-stopped
     volumes: [ "./element-call/config.json:/app/config.json:ro" ]
-    ports: [ "8080:80" ]
+    ports: [ "8007:80" ]
     networks: [ matrix-net ]
     labels:
       com.docker.compose.project: "matrix-stack"
@@ -816,7 +949,7 @@ SYNAPSEEOF
     docker exec synapse register_new_matrix_user -c /data/homeserver.yaml -u "$ADMIN_USER" -p "$ADMIN_PASS" --admin http://localhost:8008
     
     # Proxy Guides
-    if [[ "$PROXY_TYPE" == "npm" ]] || [[ "$PROXY_TYPE" == "npmplus" ]]; then
+    if [[ "$PROXY_TYPE" == "npm" ]]; then
         echo -e "\n${ACCENT}Would you like guided setup for Nginx Proxy Manager? (y/n):${RESET} "
         read -r SHOW_GUIDE
         if [[ "$SHOW_GUIDE" =~ ^[Yy]$ ]]; then
@@ -825,10 +958,14 @@ SYNAPSEEOF
             echo -e "${BANNER}│                 NGINX PROXY MANAGER SETUP GUIDE              │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
             
+            echo -e "\n${INFO}Note: NPM and NPMPlus have slightly different option names.${RESET}"
+            echo -e "${INFO}• NPM: Uses 'Block Exploits' - NPMPlus: Uses 'ModSecurity'${RESET}"
+            echo -e "${INFO}• Both: Enable SSL/TLS and Force SSL/HTTPS${RESET}\n"
+            
             echo -e "\n${ACCENT}Create Proxy Host in NPM:${RESET}"
             echo -e "   Domain: ${INFO}$SUB_MATRIX.$DOMAIN${RESET}"
             echo -e "   Forward to: ${INFO}http://$AUTO_LOCAL_IP:8008${RESET}"
-            echo -e "   Enable: Websockets, Block Exploits, SSL (Force HTTPS)\n"
+            echo -e "   Enable: Websockets, Block Exploits/ModSecurity, SSL (Force HTTPS)\n"
             
             echo -e "${ACCENT}Advanced Tab - Copy this:${RESET}\n"
             cat << 'NPMCONF'
@@ -858,10 +995,12 @@ NPMCONF
             echo -e "${BANNER}│                  NPM SETUP - LIVEKIT PROXY                   │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
             
+            echo -e "\n${INFO}Note: Same settings apply for LiveKit proxy${RESET}\n"
+            
             echo -e "\n${ACCENT}Create Proxy Host in NPM:${RESET}"
             echo -e "   Domain: ${INFO}livekit.$DOMAIN${RESET}"
             echo -e "   Forward to: ${INFO}http://$AUTO_LOCAL_IP:7880${RESET}"
-            echo -e "   Enable: Websockets, Block Exploits, SSL (Force HTTPS)\n"
+            echo -e "   Enable: Websockets, Block Exploits/ModSecurity, SSL (Force HTTPS)\n"
             
             echo -e "${ACCENT}Advanced Tab - Copy this:${RESET}\n"
             cat << 'LKCONF'
@@ -878,13 +1017,15 @@ LKCONF
             
             clear
             echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-            echo -e "${BANNER}│                NPM SETUP - ELEMENT CALL                      │${RESET}"
+            echo -e "${BANNER}│                  NPM SETUP - ELEMENT CALL                    │${RESET}"
             echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+            
+            echo -e "\n${INFO}Note: Element Call only needs basic proxy settings${RESET}\n"
             
             echo -e "\n${ACCENT}Create Proxy Host in NPM:${RESET}"
             echo -e "   Domain: ${INFO}$SUB_CALL.$DOMAIN${RESET}"
-            echo -e "   Forward to: ${INFO}http://$AUTO_LOCAL_IP:8080${RESET}"
-            echo -e "   Enable: Websockets, Block Exploits, SSL (Force HTTPS)\n"
+            echo -e "   Forward to: ${INFO}http://$AUTO_LOCAL_IP:8007${RESET}"
+            echo -e "   Enable: Websockets, Block Exploits/ModSecurity, SSL (Force HTTPS)\n"
             
             echo -e "\n${SUCCESS}✓ No advanced configuration needed${RESET}"
             echo -e "\n${WARNING}Press ENTER when complete...${RESET}"
@@ -930,7 +1071,7 @@ livekit.$DOMAIN {
 }
 
 $SUB_CALL.$DOMAIN {
-    reverse_proxy $AUTO_LOCAL_IP:8080
+    reverse_proxy $AUTO_LOCAL_IP:8007
     header {
         Access-Control-Allow-Origin *
     }
@@ -990,7 +1131,7 @@ http:
     element-call:
       loadBalancer:
         servers:
-          - url: "http://$AUTO_LOCAL_IP:8080"
+          - url: "http://$AUTO_LOCAL_IP:8007"
 
   middlewares:
     matrix-headers:
@@ -1025,7 +1166,7 @@ ingress:
   - hostname: livekit.$DOMAIN
     service: http://$AUTO_LOCAL_IP:7880
   - hostname: $SUB_CALL.$DOMAIN
-    service: http://$AUTO_LOCAL_IP:8080
+    service: http://$AUTO_LOCAL_IP:8007
   - hostname: turn.$DOMAIN
     service: http://$AUTO_LOCAL_IP:3478
   - service: http_status:404
@@ -1039,6 +1180,24 @@ CFCONF
         fi
     fi
 
+    # Log Rotation Configuration
+    echo -e "\n${ACCENT}>> Log Rotation Configuration${RESET}"
+    echo -e "   ${INFO}Docker containers can generate large amounts of logs that may fill up your disk.${RESET}"
+    echo -e "   ${INFO}Log rotation helps manage this by automatically rotating and compressing logs.${RESET}"
+    echo -e ""
+    echo -e "   ${WARNING}⚠️  Recommendation: Enable log rotation to prevent disk space issues${RESET}"
+    echo -e "   • ${SUCCESS}Enable log rotation (y):${RESET} Configure automatic log rotation for all containers"
+    echo -e "   • ${ERROR}Disable log rotation (n):${RESET} Leave logs as-is (may fill up disk over time)"
+    echo -ne "Setup log rotation to prevent disk space issues? (default: y): "
+    read -r SETUP_LOG_ROTATION
+    SETUP_LOG_ROTATION=${SETUP_LOG_ROTATION:-y}
+    
+    if [[ "$SETUP_LOG_ROTATION" =~ ^[Yy]$ ]]; then
+        setup_log_rotation
+    else
+        echo -e "   ${WARNING}⚠️  Log rotation skipped - monitor disk space manually${RESET}"
+    fi
+
     draw_footer
 }
 
@@ -1049,17 +1208,19 @@ draw_footer() {
     echo -e "${SUCCESS}└──────────────────────────────────────────────────────────────┘${RESET}"
     
     echo -e "\n${ACCENT}═══════════════════════ ACCESS CREDENTIALS ═══════════════════════${RESET}"
-    echo -e "   ${ACCESS_NAME}Matrix Server:${RESET}    ${ACCESS_VALUE}${SERVER_NAME}${RESET}"
-    echo -e "   ${ACCESS_NAME}Admin User:${RESET}       ${ACCESS_VALUE}${ADMIN_USER}${RESET}"
+    echo -e "   ${ACCESS_NAME}Matrix Server:${RESET}       ${ACCESS_VALUE}${SERVER_NAME}${RESET}"
+    echo -e "   ${ACCESS_NAME}Admin User:${RESET}          ${ACCESS_VALUE}${ADMIN_USER}${RESET}"
     if [ "$PASS_IS_CUSTOM" = true ]; then
-        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}       ${ACCESS_VALUE}[Your custom password]${RESET}"
+        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}          ${ACCESS_VALUE}[Your custom password]${RESET}"
     else
-        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}       ${ACCESS_VALUE}${ADMIN_PASS}${RESET}"
+        echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}          ${ACCESS_VALUE}${ADMIN_PASS}${RESET}"
     fi
-    echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}      ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8009${RESET}"
-    echo -e "   ${ACCESS_NAME}Matrix API (LAN):${RESET} ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8008${RESET}"
-    echo -e "   ${ACCESS_NAME}Matrix API (WAN):${RESET} ${ACCESS_VALUE}https://$SUB_MATRIX.$DOMAIN${RESET}"
-    echo -e "   ${ACCESS_NAME}Element Call:${RESET}     ${ACCESS_VALUE}http://$AUTO_LOCAL_IP:8080${RESET} (LAN) / https://$SUB_CALL.$DOMAIN${RESET} (WAN)"
+    echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}         ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8009${RESET}"
+    echo -e "   ${ACCESS_NAME}Matrix API (LAN):${RESET}    ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8008${RESET}"
+    echo -e "   ${ACCESS_NAME}Matrix API (WAN):${RESET}    ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_MATRIX.$DOMAIN${ACCESS_VALUE}${RESET}"
+    
+    # Element Call line with proper coloring
+    echo -e "   ${ACCESS_NAME}Element Call:${RESET}        ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8007${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_CALL.$DOMAIN${ACCESS_VALUE}${RESET} (WAN)"
 
     echo -e "\n${ACCENT}═══════════════════════ INTERNAL SECRETS ════════════════════════${RESET}"
     echo -e "   ${SECRET_NAME}Postgres Pass:${RESET}   ${SECRET_VALUE}${DB_PASS}${RESET}"
@@ -1075,7 +1236,7 @@ draw_footer() {
         LIVEKIT_STATUS="DNS ONLY"
         TURN_STATUS="DNS ONLY"
         ELEMENT_CALL_STATUS="DNS ONLY"
-    elif [[ "$PROXY_TYPE" == "npm" ]] || [[ "$PROXY_TYPE" == "npmplus" ]] || [[ "$PROXY_TYPE" == "caddy" ]] || [[ "$PROXY_TYPE" == "traefik" ]]; then
+    elif [[ "$PROXY_TYPE" == "npm" ]] || [[ "$PROXY_TYPE" == "caddy" ]] || [[ "$PROXY_TYPE" == "traefik" ]]; then
         MATRIX_STATUS="PROXIED"
         LIVEKIT_STATUS="PROXIED"
         TURN_STATUS="DNS ONLY"
@@ -1090,37 +1251,46 @@ draw_footer() {
     echo -e "   ┌─────────────────┬───────────┬─────────────────┬─────────────────┐"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ %-15s │\n" "HOSTNAME" "TYPE" "VALUE" "STATUS"
     echo -e "   ├─────────────────┼───────────┼─────────────────┼─────────────────┤"
+    
+    # Matrix row
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_MATRIX" "A" "$AUTO_PUBLIC_IP"
     if [[ "$MATRIX_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${MATRIX_STATUS}${RESET} │"
+        printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$MATRIX_STATUS"
     else
-        echo -e "${MATRIX_STATUS} │"
+        printf "%-15s │\n" "$MATRIX_STATUS"
     fi
+    
+    # Turn row
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "turn" "A" "$AUTO_PUBLIC_IP"
     if [[ "$TURN_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${TURN_STATUS}${RESET}  │"
+        printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$TURN_STATUS"
     else
-        echo -e "${TURN_STATUS} │"
+        printf "%-15s │\n" "$TURN_STATUS"
     fi
+    
+    # Livekit row
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "livekit" "A" "$AUTO_PUBLIC_IP"
     if [[ "$LIVEKIT_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${LIVEKIT_STATUS}${RESET}  │"
+        printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$LIVEKIT_STATUS"
     else
-        echo -e "${LIVEKIT_STATUS} │"
+        printf "%-15s │\n" "$LIVEKIT_STATUS"
     fi
+    
+    # Element Call row
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_CALL" "A" "$AUTO_PUBLIC_IP"
     if [[ "$ELEMENT_CALL_STATUS" == "PROXIED" ]]; then
-        echo -e "${DNS_STATUS_PROXIED}${ELEMENT_CALL_STATUS}${RESET}  │"
+        printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$ELEMENT_CALL_STATUS"
     else
-        echo -e "${ELEMENT_CALL_STATUS} │"
+        printf "%-15s │\n" "$ELEMENT_CALL_STATUS"
     fi
+    
     echo -e "   └─────────────────┴───────────┴─────────────────┴─────────────────┘"
 
     echo -e "\n${ACCENT}═══════════════════════ CONFIGURATION FILES ═══════════════════════${RESET}"
-    echo -e "   ${INFO}• Coturn:${RESET}   ${CONFIG_PATH}${TARGET_DIR}/coturn/turnserver.conf${RESET}"
-    echo -e "   ${INFO}• LiveKit:${RESET}  ${CONFIG_PATH}${TARGET_DIR}/livekit/livekit.yaml${RESET}"
-    echo -e "   ${INFO}• Synapse:${RESET}  ${CONFIG_PATH}${TARGET_DIR}/synapse/homeserver.yaml${RESET}"
-    echo -e "   ${INFO}• Element Call:${RESET} ${CONFIG_PATH}${TARGET_DIR}/element-call/config.json${RESET}"
+    echo -e "   ${INFO}• Coturn:${RESET}         ${CONFIG_PATH}${TARGET_DIR}/coturn/turnserver.conf${RESET}"
+    echo -e "   ${INFO}• LiveKit:${RESET}        ${CONFIG_PATH}${TARGET_DIR}/livekit/livekit.yaml${RESET}"
+    echo -e "   ${INFO}• Synapse:${RESET}        ${CONFIG_PATH}${TARGET_DIR}/synapse/homeserver.yaml${RESET}"
+    echo -e "   ${INFO}• Element Call:${RESET}   ${CONFIG_PATH}${TARGET_DIR}/element-call/config.json${RESET}"
 
     echo -e "\n${ACCENT}════════════════════════ IMPORTANT NOTES ═════════════════════════${RESET}"
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Multiple simultaneous screenshares are now supported${RESET}"
@@ -1134,9 +1304,16 @@ draw_footer() {
     else
         echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  TURN LAN: ${ERROR}DISABLED${RESET}${NOTE_TEXT} (secure - production recommended)${RESET}"
     fi
+    
+    # Add log rotation status to important notes
+    if [[ "$SETUP_LOG_ROTATION" =~ ^[Yy]$ ]]; then
+        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Log rotation: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (logs managed automatically)${RESET}"
+    else
+        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Log rotation: ${ERROR}DISABLED${RESET}${NOTE_TEXT} (monitor disk space manually)${RESET}"
+    fi
 
     echo -e "\n${WARNING}══════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${WARNING}         SAVE THIS DATA IMMEDIATELY! NOT STORED ELSEWHERE.        ${RESET}"
+    echo -e "${WARNING}     !!! SAVE THIS DATA IMMEDIATELY! NOT STORED ELSEWHERE. !!!    ${RESET}"
     echo -e "${WARNING}══════════════════════════════════════════════════════════════════${RESET}\n"
 }
 
