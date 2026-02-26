@@ -46,7 +46,7 @@ Discord · Telegram · WhatsApp · Signal · Slack · Instagram
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/matrix-stack-deploy.sh
+curl -O https://raw.githubusercontent.com/zeMadCat/Matrix-docker-stack/main/matrix-stack-deploy.sh
 
 # Make executable
 chmod +x matrix-stack-deploy.sh
