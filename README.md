@@ -7,7 +7,7 @@
 
 ## What it is
 
-A fully interactive TUI deployment script for a self-hosted Matrix stack. Originally written for `example.com` but designed to work with any domain through a dynamic setup wizard. You answer prompts, the script builds everything.
+A fully interactive TUI deployment script for a self-hosted Matrix stack. Originally written for my own domain but designed to work with any domain through a dynamic setup wizard. You answer prompts, the script builds everything.
 
 **This is not a polished enterprise tool.** It's a personal homelab project that grew into something reusable. Use it at your own risk, and feel free to adapt it.
 
@@ -66,7 +66,7 @@ sudo ./matrix-stack-deploy.sh
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │              MATRIX HOMESERVER DEPLOYMENT SUITE              │
-│                    by yourusername  •  v1.1                      │
+│                     by zeMadCat  •  v1.1                     │
 └──────────────────────────────────────────────────────────────┘
 
  What would you like to do?
