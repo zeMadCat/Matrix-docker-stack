@@ -13,10 +13,11 @@
 #  • Synapse (Matrix Homeserver)                                               #
 #  • MAS (Matrix Authentication Service)                                       #
 #  • PostgreSQL (Database)                                                     #
-#  • LiveKit (SFU for unlimited multi-screenshare video calls)                 #
-#  • Element Call (WebRTC video conferencing)                                  #
-#  • Coturn (TURN/STUN server)                                                 #
-#  • Synapse Admin (Web admin panel)                                           #
+#  • LiveKit SFU (unlimited multi-screenshare + built-in TURN/STUN)           #
+#  • LiveKit JWT Service (token generation)                                    #
+#  • Element Web (web client)                                                  #
+#  • Element Call (standalone WebRTC UI — optional)                            #
+#  • Element Admin or Synapse Admin (admin panel — optional, user choice)      #
 #                                                                              #
 #  iOS/Android: Use Element app (not Element X)                                #
 #                                                                              #
@@ -26,7 +27,7 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.1"
+SCRIPT_VERSION="1.2"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
@@ -68,6 +69,72 @@ CODE='\033[0;32m'                  # Dark green - code block content
 # UI FUNCTIONS                                                                 #
 ################################################################################
 
+# ask_yn VAR PROMPT [DEFAULT]
+# Loops until user enters y/Y/n/N. DEFAULT is applied if user presses Enter.
+# Result stored in the variable named by VAR.
+ask_yn() {
+    local _var="$1"
+    local _prompt="$2"
+    local _default="${3:-}"
+    local _input
+    while true; do
+        echo -ne "$_prompt"
+        read -r _input
+        _input="${_input:-$_default}"
+        case "$_input" in
+            [Yy]|[Nn]) break ;;
+            *) echo -e "   ${ERROR}Please answer y or n.${RESET}" ;;
+        esac
+    done
+    printf -v "$_var" '%s' "$_input"
+}
+
+# ask_choice VAR PROMPT ALLOWED...
+# Loops until user enters one of the ALLOWED values.
+# Result stored in the variable named by VAR.
+# Usage: ask_choice MYVAR "Select (1/2/3): " 1 2 3
+ask_choice() {
+    local _var="$1"
+    local _prompt="$2"
+    shift 2
+    local _allowed=("$@")
+    local _input
+    while true; do
+        echo -ne "$_prompt"
+        read -r _input
+        local _v
+        for _v in "${_allowed[@]}"; do
+            if [[ "$_input" == "$_v" ]]; then
+                printf -v "$_var" '%s' "$_input"
+                return
+            fi
+        done
+        echo -e "   ${ERROR}Invalid — please enter one of: ${_allowed[*]}.${RESET}"
+    done
+}
+
+# ask_num VAR PROMPT MIN MAX [DEFAULT]
+# Loops until user enters an integer between MIN and MAX inclusive.
+# Result stored in the variable named by VAR.
+ask_num() {
+    local _var="$1"
+    local _prompt="$2"
+    local _min="$3"
+    local _max="$4"
+    local _default="${5:-}"
+    local _input
+    while true; do
+        echo -ne "$_prompt"
+        read -r _input
+        _input="${_input:-$_default}"
+        if [[ "$_input" =~ ^[0-9]+$ ]] && (( _input >= _min && _input <= _max )); then
+            break
+        fi
+        echo -e "   ${ERROR}Invalid — enter a number between $_min and $_max.${RESET}"
+    done
+    printf -v "$_var" '%s' "$_input"
+}
+
 # Print a code block with color and border
 print_code() {
     local line
@@ -86,33 +153,17 @@ draw_header() {
     echo -e "${BANNER}│                          by MadCat                           │${RESET}"
     echo -e "${BANNER}│                                                              │${RESET}"
     echo -e "${BANNER}│                  Included Components:                        │${RESET}"
-    echo -e "${BANNER}│    Synapse • MAS • LiveKit • Coturn • PostgreSQL • Sync      │${RESET}"
-    echo -e "${BANNER}│           Synapse Admin • Element Call • Bridges             │${RESET}"
+    echo -e "${BANNER}│   Synapse • MAS • LiveKit • LiveKit JWT • PostgreSQL • Sync  │${RESET}"
+    echo -e "${BANNER}│        Element Call • Admin Panel • Bridges (optional)       │${RESET}"
     echo -e "${BANNER}│                                                              │${RESET}"
-    echo -e "${BANNER}│          Selectable Bridges (Discord • Telegram •            │${RESET}"
-    echo -e "${BANNER}│           WhatsApp • Signal • Slack • Instagram)             │${RESET}"
+    echo -e "${BANNER}│       Bridges: Discord • Telegram • WhatsApp • Signal        │${RESET}"
+    echo -e "${BANNER}│                    Slack • Instagram                         │${RESET}"
     echo -e "${BANNER}│                                                              │${RESET}"
     echo -e "${BANNER}│           Dynamic • Multi-Screenshare • Easy Setup           │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
     
-    # Show version info
+    # Show version info only
     echo -e "\n${INFO}Script Version: ${SUCCESS}v${SCRIPT_VERSION}${RESET}"
-    
-    # Check for latest version (quick, non-blocking)
-    if command -v curl >/dev/null 2>&1; then
-        LATEST_VERSION=$(curl -s --max-time 2 "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
-        if [ -n "$LATEST_VERSION" ]; then
-            compare_versions "$SCRIPT_VERSION" "$LATEST_VERSION" 2>/dev/null
-            local result=$?
-            if [[ $result -eq 2 ]]; then
-                echo -e "${WARNING}Latest Version: v${LATEST_VERSION} ${ERROR}(Update available!)${RESET}"
-            elif [[ $result -eq 0 ]]; then
-                echo -e "${INFO}Latest Version: ${SUCCESS}v${LATEST_VERSION}${RESET} ✓"
-            else
-                echo -e "${INFO}Latest Version: v${LATEST_VERSION}${RESET}"
-            fi
-        fi
-    fi
     echo ""
 }
 
@@ -155,9 +206,10 @@ save_credentials_prompt() {
     mkdir -p "$(dirname "$CREDS_PATH")"
     cat > "$CREDS_PATH" << CREDSEOF
 ################################################################################
-# MATRIX STACK CREDENTIALS
+# MATRIX STACK — DEPLOYMENT SUMMARY
 # Generated: $(date)
 # Server:    $SERVER_NAME
+# Version:   v${SCRIPT_VERSION}
 #
 # WARNING: This file contains sensitive passwords in plain text.
 #          Store securely and delete when no longer needed.
@@ -168,29 +220,83 @@ save_credentials_prompt() {
 
   Admin User:          @$ADMIN_USER:$SERVER_NAME
   Admin Password:      $ADMIN_PASS
-  Admin Panel:         http://$AUTO_LOCAL_IP:8009
   Matrix API (LAN):    http://$AUTO_LOCAL_IP:8008
   Matrix API (WAN):    https://$SUB_MATRIX.$DOMAIN
   Auth Service (LAN):  http://$AUTO_LOCAL_IP:8010
   Auth Service (WAN):  https://$SUB_MAS.$DOMAIN
   Element Web (LAN):   http://$AUTO_LOCAL_IP:8012
   Element Web (WAN):   https://$SUB_ELEMENT.$DOMAIN
-  Element Call (LAN):  http://$AUTO_LOCAL_IP:8007
-  Element Call (WAN):  https://$SUB_CALL.$DOMAIN
+$(if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+echo "  Element Call (LAN):  http://$AUTO_LOCAL_IP:8007"
+echo "  Element Call (WAN):  https://$SUB_CALL.$DOMAIN"
+fi)
+$(if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+echo "  Element Admin (LAN): http://$AUTO_LOCAL_IP:8014"
+echo "  Element Admin (WAN): https://$SUB_ELEMENT_ADMIN.$DOMAIN"
+fi)
+$(if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+echo "  Synapse Admin (LAN): http://$AUTO_LOCAL_IP:8009"
+echo "  Synapse Admin (WAN): https://$SUB_SYNAPSE_ADMIN.$DOMAIN"
+fi)
+$(if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
+echo "  Sliding Sync (LAN):  http://$AUTO_LOCAL_IP:8011"
+echo "  Sliding Sync (WAN):  https://$SUB_SLIDING_SYNC.$DOMAIN"
+fi)
+$(if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
+echo "  Media Repo (LAN):    http://$AUTO_LOCAL_IP:8013"
+echo "  Media Repo (WAN):    https://$SUB_MEDIA_REPO.$DOMAIN"
+fi)
 
 ══ DATABASE ═════════════════════════════════════════════════════════════════════
 
   DB User:             $DB_USER
   DB Password:         $DB_PASS
-  Databases:           synapse, matrix_auth, syncv3
+  Databases:           synapse, matrix_auth, syncv3$(if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then echo ", media_repo"; fi)
 
 ══ INTERNAL SECRETS ═════════════════════════════════════════════════════════════
 
   Shared Secret:       $REG_SECRET
   MAS Secret:          $MAS_SECRET
-  TURN Secret:         $TURN_SECRET
   LiveKit API Key:     $LK_API_KEY
   LiveKit API Secret:  $LK_API_SECRET
+
+══ CONFIGURATION FILES ══════════════════════════════════════════════════════════
+
+  Install dir:         $TARGET_DIR
+  Synapse config:      $TARGET_DIR/synapse/homeserver.yaml
+  MAS config:          $TARGET_DIR/mas/config.yaml
+  LiveKit config:      $TARGET_DIR/livekit/livekit.yaml
+  Docker Compose:      $TARGET_DIR/compose.yaml
+
+══ IMPORTANT NOTES ══════════════════════════════════════════════════════════════
+
+  • MAS (Matrix Authentication Service) handles all authentication via OIDC
+  • app.element.io does NOT work with self-hosted MAS — use $SUB_ELEMENT.$DOMAIN
+  • iOS/Android: Use Element app (NOT Element X)
+  • TURN is built into LiveKit — turn.$DOMAIN must be DNS ONLY (never proxied)
+  • Register users: docker exec matrix-auth mas-cli manage register-user
+  • Test federation: https://federationtester.matrix.org
+
+$(if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
+echo "══ BRIDGES ══════════════════════════════════════════════════════════════════════"
+echo ""
+echo "  Installed bridges: ${SELECTED_BRIDGES[*]}"
+echo ""
+echo "  To activate a bridge:"
+echo "  1. Open Element Web and start a DM with the bot user"
+echo "  2. Wait 1-2 min for the bot to appear if needed"
+echo ""
+for bridge in "${SELECTED_BRIDGES[@]}"; do
+    case $bridge in
+        discord)   echo "  Discord:   DM @discordbot:$DOMAIN   → send: login  → follow the browser link" ;;
+        telegram)  echo "  Telegram:  DM @telegrambot:$DOMAIN  → send: login  → enter phone number + code" ;;
+        whatsapp)  echo "  WhatsApp:  DM @whatsappbot:$DOMAIN  → send: login  → scan QR code in WhatsApp app" ;;
+        signal)    echo "  Signal:    DM @signalbot:$DOMAIN    → send: link   → scan QR code in Signal app" ;;
+        slack)     echo "  Slack:     DM @slackbot:$DOMAIN     → send: login  → follow OAuth link" ;;
+        instagram) echo "  Instagram: DM @instagrambot:$DOMAIN → send: login  → enter username + password" ;;
+    esac
+done
+fi)
 CREDSEOF
 
     # Append NPM credentials if applicable
@@ -245,13 +351,35 @@ draw_footer() {
     else
         echo -e "   ${ACCESS_NAME}Admin Pass:${RESET}          ${ACCESS_VALUE}${ADMIN_PASS}${RESET}"
     fi
-    echo -e "   ${ACCESS_NAME}Admin Panel:${RESET}         ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8009${RESET}"
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo -e "   ${ACCESS_NAME}Element Admin:${RESET}       ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8014${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_ELEMENT_ADMIN.$DOMAIN${ACCESS_VALUE}${RESET} (WAN)"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo -e "   ${ACCESS_NAME}Synapse Admin:${RESET}       ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8009${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_SYNAPSE_ADMIN.$DOMAIN${ACCESS_VALUE}${RESET} (WAN)"
+    fi
     echo -e "   ${ACCESS_NAME}Matrix API:${RESET}          ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8008${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_MATRIX.$DOMAIN${ACCESS_VALUE}${RESET} (WAN)"
     echo -e "   ${ACCESS_NAME}Auth Service (MAS):${RESET}  ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8010${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_MAS.$DOMAIN${ACCESS_VALUE}${RESET} (WAN)"
     echo -e "   ${ACCESS_NAME}Element Web:${RESET}         ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8012${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_ELEMENT.$DOMAIN${ACCESS_VALUE}${RESET} (WAN)"
-    echo -e "   ${ACCESS_NAME}Element Call:${RESET}        ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8007${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_CALL.$DOMAIN${ACCESS_VALUE}${RESET} (WAN via Element Web)"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo -e "   ${ACCESS_NAME}Element Call:${RESET}        ${ACCESS_VALUE}http://${LOCAL_IP_COLOR}$AUTO_LOCAL_IP${ACCESS_VALUE}:8007${RESET} (LAN) / ${ACCESS_VALUE}https://${USER_ID_VALUE}$SUB_CALL.$DOMAIN${ACCESS_VALUE}${RESET} (WAN via Element Web)"
+    fi
 
-    # Proxy admin info if we deployed it
+    # User management section — always visible, clearly copy-pasteable
+    echo -e "\n${ACCENT}═══════════════════════ USER MANAGEMENT ════════════════════════${RESET}"
+    echo -e "   ${WARNING}⚠️  Registration via Element Web is disabled — MAS handles all accounts.${RESET}"
+    echo -e "   ${INFO}The 'Create account' button in Element will open the MAS registration page.${RESET}"
+    echo -e ""
+    echo -e "   ${ACCENT}Create a regular user:${RESET}"
+    echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user${RESET}"
+    echo -e ""
+    echo -e "   ${ACCENT}Create an admin user:${RESET}"
+    echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user --admin${RESET}"
+    echo -e ""
+    echo -e "   ${ACCENT}Or register via the MAS web UI:${RESET}"
+    echo -e "   ${SUCCESS}https://$SUB_MAS.$DOMAIN/account/${RESET}"
+    echo -e ""
+    echo -e "   ${INFO}ℹ  If registration is disabled, the MAS UI will reject new signups.${RESET}"
+    echo -e "   ${INFO}   Use the CLI commands above regardless of registration setting.${RESET}"
     if [[ "$PROXY_ALREADY_RUNNING" == "false" ]]; then
         case "$PROXY_TYPE" in
             npm)
@@ -283,10 +411,9 @@ draw_footer() {
     echo -e "   ${SECRET_NAME}Database Credentials:${RESET}"
     echo -e "   ${SECRET_NAME}   DB User:${RESET}       ${SECRET_VALUE}${DB_USER}${RESET}"
     echo -e "   ${SECRET_NAME}   DB Password:${RESET}   ${SECRET_VALUE}${DB_PASS}${RESET}"
-    echo -e "   ${SECRET_NAME}   Databases:${RESET}     ${SECRET_VALUE}synapse, matrix_auth, syncv3${RESET}"
+    echo -e "   ${SECRET_NAME}   Databases:${RESET}     ${SECRET_VALUE}synapse, matrix_auth, syncv3$(if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then echo ", media_repo"; fi)${RESET}"
     echo -e "   ${SECRET_NAME}Shared Secret:${RESET}    ${SECRET_VALUE}${REG_SECRET}${RESET}"
     echo -e "   ${SECRET_NAME}MAS Secret:${RESET}       ${SECRET_VALUE}${MAS_SECRET}${RESET}"
-    echo -e "   ${SECRET_NAME}TURN Secret:${RESET}      ${SECRET_VALUE}${TURN_SECRET}${RESET}"
     echo -e "   ${SECRET_NAME}Livekit API Key:${RESET}  ${SECRET_VALUE}${LK_API_KEY}${RESET}"
     echo -e "   ${SECRET_NAME}Livekit Secret:${RESET}   ${SECRET_VALUE}${LK_API_SECRET}${RESET}"
 
@@ -298,18 +425,21 @@ draw_footer() {
         LIVEKIT_STATUS="DNS ONLY"
         TURN_STATUS="DNS ONLY"
         ELEMENT_CALL_STATUS="DNS ONLY"
+        ELEMENT_ADMIN_STATUS="DNS ONLY"
     elif [[ "$PROXY_TYPE" == "npm" ]] || [[ "$PROXY_TYPE" == "caddy" ]] || [[ "$PROXY_TYPE" == "traefik" ]]; then
         MATRIX_STATUS="PROXIED"
         MAS_STATUS="PROXIED"
         LIVEKIT_STATUS="PROXIED"
         TURN_STATUS="DNS ONLY"
         ELEMENT_CALL_STATUS="PROXIED"
+        ELEMENT_ADMIN_STATUS="PROXIED"
     else
         MATRIX_STATUS="DNS ONLY"
         MAS_STATUS="DNS ONLY"
         LIVEKIT_STATUS="DNS ONLY"
         TURN_STATUS="DNS ONLY"
         ELEMENT_CALL_STATUS="DNS ONLY"
+        ELEMENT_ADMIN_STATUS="DNS ONLY"
     fi
     
     # Display DNS records table
@@ -348,13 +478,31 @@ draw_footer() {
     else
         printf "%-15s │\n" "$LIVEKIT_STATUS"
     fi
-    
-    # Element Call row
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_CALL" "A" "$AUTO_PUBLIC_IP"
-    if [[ "$ELEMENT_CALL_STATUS" == "PROXIED" ]]; then
-        printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$ELEMENT_CALL_STATUS"
-    else
-        printf "%-15s │\n" "$ELEMENT_CALL_STATUS"
+
+    # Element Call row (if enabled)
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_CALL" "A" "$AUTO_PUBLIC_IP"
+        if [[ "$ELEMENT_CALL_STATUS" == "PROXIED" ]]; then
+            printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$ELEMENT_CALL_STATUS"
+        else
+            printf "%-15s │\n" "$ELEMENT_CALL_STATUS"
+        fi
+    fi
+
+    # Element Admin row (if enabled)
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_ELEMENT_ADMIN" "A" "$AUTO_PUBLIC_IP"
+        if [[ "$ELEMENT_ADMIN_STATUS" == "PROXIED" ]]; then
+            printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "$ELEMENT_ADMIN_STATUS"
+        else
+            printf "%-15s │\n" "$ELEMENT_ADMIN_STATUS"
+        fi
+    fi
+
+    # Synapse Admin row (if enabled)
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ " "$SUB_SYNAPSE_ADMIN" "A" "$AUTO_PUBLIC_IP"
+        printf "${DNS_STATUS_PROXIED}%-15s${RESET} │\n" "PROXIED"
     fi
 
     # Element Web row
@@ -381,7 +529,12 @@ draw_footer() {
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ %-21s │\n" "SERVICE" "PROTOCOL" "PORT" "FORWARD TO"
     echo -e "   ├─────────────────┼───────────┼─────────────────┼───────────────────────┤"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Matrix Synapse" "TCP" "8008" "$AUTO_LOCAL_IP:8008"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Synapse Admin" "TCP" "8009" "$AUTO_LOCAL_IP:8009"
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Admin" "TCP" "8014" "$AUTO_LOCAL_IP:8014"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Synapse Admin" "TCP" "8009" "$AUTO_LOCAL_IP:8009"
+    fi
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "MAS Auth" "TCP" "8010" "$AUTO_LOCAL_IP:8010"
 
     # Add Sliding Sync if enabled
@@ -396,30 +549,43 @@ draw_footer() {
         printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Media Repo" "TCP" "8013" "$AUTO_LOCAL_IP:8013"
     fi
     
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "TURN (TCP)" "TCP" "3478" "$AUTO_LOCAL_IP:3478"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "TURN (UDP)" "UDP" "3478" "$AUTO_LOCAL_IP:3478"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "TURN Range" "UDP" "49152-49252" "$AUTO_LOCAL_IP"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "TURN (TCP/UDP)" "TCP/UDP" "3478" "$AUTO_LOCAL_IP:3478"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "TURN TLS" "TCP" "5349" "$AUTO_LOCAL_IP:5349"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit HTTP" "TCP" "7880" "$AUTO_LOCAL_IP:7880"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit RTC" "UDP" "7882" "$AUTO_LOCAL_IP:7882"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit JWT" "TCP" "8080" "$AUTO_LOCAL_IP:8080"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit Range" "UDP" "50000-50050" "$AUTO_LOCAL_IP"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Call" "TCP" "8007" "$AUTO_LOCAL_IP:8007"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Call" "TCP" "8007" "$AUTO_LOCAL_IP:8007"
+    fi
     echo -e "   └─────────────────┴───────────┴─────────────────┴───────────────────────┘"
 
     # Configuration files section
     echo -e "\n${ACCENT}═══════════════════════ CONFIGURATION FILES ═══════════════════════${RESET}"
-    echo -e "   ${INFO}• Coturn:${RESET}         ${CONFIG_PATH}${TARGET_DIR}/coturn/turnserver.conf${RESET}"
     echo -e "   ${INFO}• LiveKit:${RESET}        ${CONFIG_PATH}${TARGET_DIR}/livekit/livekit.yaml${RESET}"
     echo -e "   ${INFO}• Synapse:${RESET}        ${CONFIG_PATH}${TARGET_DIR}/synapse/homeserver.yaml${RESET}"
     echo -e "   ${INFO}• MAS:${RESET}            ${CONFIG_PATH}${TARGET_DIR}/mas/config.yaml${RESET}"
-    echo -e "   ${INFO}• Element Call:${RESET}   ${CONFIG_PATH}${TARGET_DIR}/element-call/config.json${RESET}"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo -e "   ${INFO}• Element Call:${RESET}   ${CONFIG_PATH}${TARGET_DIR}/element-call/config.json${RESET}"
+    fi
 
     # Important notes section
     echo -e "\n${ACCENT}════════════════════════ IMPORTANT NOTES ═════════════════════════${RESET}"
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} MAS (Matrix Authentication Service) handles user authentication${RESET}"
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} UNLIMITED multi-screenshare enabled (no artificial limits)${RESET}"
-    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} LiveKit SFU configured for high-quality video calls${RESET}"
-    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Element Call available for WebRTC video conferencing${RESET}"
-    echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Element Call: Login with your admin account @$ADMIN_USERNAME:$DOMAIN${RESET}"
+    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} LiveKit SFU configured for high-quality video calls (with built-in TURN/STUN)${RESET}"
+    echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} LiveKit JWT Service deployed for token generation${RESET}"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Standalone Element Call deployed: https://$SUB_CALL.$DOMAIN${RESET}"
+    else
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Video calling available via Element/Commet clients (built-in widget)${RESET}"
+    fi
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Element Admin: https://$SUB_ELEMENT_ADMIN.$DOMAIN${RESET}"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} Synapse Admin: https://$SUB_SYNAPSE_ADMIN.$DOMAIN${RESET}"
+    fi
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT} iOS/Android: Use Element app (NOT Element X)${RESET}"
     echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Element Web (self-hosted): https://$SUB_ELEMENT.$DOMAIN${RESET}"
     echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  app.element.io does NOT work with self-hosted MAS${RESET}"
@@ -442,7 +608,7 @@ draw_footer() {
     echo -e "      • LiveKit: ${INFO}https://$SUB_LIVEKIT.$DOMAIN${RESET}"
     # MAS configuration notes (no changes needed here, but ensure the well-known note above is clear)
     if [[ "$MAS_REGISTRATION" == "true" ]]; then
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} via MAS${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} — users can sign up at https://$SUB_MAS.$DOMAIN/account/${RESET}"
         if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then
             echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Email verification: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (SMTP configured)${RESET}"
         fi
@@ -450,7 +616,7 @@ draw_footer() {
             echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Add reCAPTCHA keys to ${CONFIG_PATH}${TARGET_DIR}/mas/config.yaml${RESET}"
         fi
     else
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} - admin creates users via MAS${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — use CLI: ${WARNING}docker exec matrix-auth mas-cli manage register-user${RESET}"
     fi
     
     # Sliding Sync note
@@ -460,33 +626,85 @@ draw_footer() {
     
     # Matrix Media Repo note
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Matrix Media Repo: Configure storage backend in config.yaml${RESET}"
+        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Matrix Media Repo: running at https://$SUB_MEDIA_REPO.$DOMAIN${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Synapse delegates all media to it — files stored at ${TARGET_DIR}/media-repo/data${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  To use S3 storage: edit ${TARGET_DIR}/media-repo/config.yaml → datastores section${RESET}"
     fi
     
     # Bridge setup instructions
     if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
         echo -e "\n${ACCENT}═══════════════════════ BRIDGE SETUP ════════════════════════${RESET}"
         echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Bridges installed: ${SUCCESS}${SELECTED_BRIDGES[*]}${RESET}"
-        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  To activate bridges, start a chat with the bot:${RESET}"
+        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Bridges need a few minutes to fully start before use.${RESET}"
+        echo -e "\n   ${ACCENT}How to activate each bridge:${RESET}"
+        echo -e "   ${INFO}1. Open Element Web: https://$SUB_ELEMENT.$DOMAIN${RESET}"
+        echo -e "   ${INFO}2. Start a new Direct Message (DM) with the bot user below${RESET}"
+        echo -e "   ${INFO}3. The bot must appear in search — if not, wait 1-2 min and retry${RESET}"
+        echo -e "   ${INFO}4. Send the command shown to begin the login flow${RESET}"
+        echo -e ""
         for bridge in "${SELECTED_BRIDGES[@]}"; do
             case $bridge in
-                discord) echo -e "      ${SUCCESS}•${RESET} Discord: Chat with ${INFO}@discordbot:$DOMAIN${RESET} → Send ${WARNING}'login'${RESET}" ;;
-                telegram) echo -e "      ${SUCCESS}•${RESET} Telegram: Chat with ${INFO}@telegrambot:$DOMAIN${RESET} → Send ${WARNING}'login'${RESET}" ;;
-                whatsapp) echo -e "      ${SUCCESS}•${RESET} WhatsApp: Chat with ${INFO}@whatsappbot:$DOMAIN${RESET} → Send ${WARNING}'login'${RESET}" ;;
-                signal) echo -e "      ${SUCCESS}•${RESET} Signal: Chat with ${INFO}@signalbot:$DOMAIN${RESET} → Send ${WARNING}'login'${RESET}" ;;
-                slack) echo -e "      ${SUCCESS}•${RESET} Slack: Chat with ${INFO}@slackbot:$DOMAIN${RESET} → Send ${WARNING}'login'${RESET}" ;;
-                instagram) echo -e "      ${SUCCESS}•${RESET} Instagram: Chat with ${INFO}@instagrambot:$DOMAIN${RESET} → Send ${WARNING}'login'${RESET}" ;;
+                discord)
+                    echo -e "   ${SUCCESS}── Discord ──────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @discordbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Follow the link the bot sends — log in via browser"
+                    echo -e "   ${INFO}Step 3:${RESET}    Authorize the bot, paste the token back if prompted"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/discord/authentication.html"
+                    echo -e ""
+                    ;;
+                telegram)
+                    echo -e "   ${SUCCESS}── Telegram ─────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @telegrambot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Enter your phone number when prompted"
+                    echo -e "   ${INFO}Step 3:${RESET}    Enter the code Telegram sends you"
+                    echo -e "   ${INFO}2FA:${RESET}       Enter your Telegram password if 2FA is enabled"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/python/telegram/authentication.html"
+                    echo -e ""
+                    ;;
+                whatsapp)
+                    echo -e "   ${SUCCESS}── WhatsApp ─────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @whatsappbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    The bot will send a QR code — scan it with WhatsApp"
+                    echo -e "   ${INFO}           (WhatsApp → Linked Devices → Link a Device)${RESET}"
+                    echo -e "   ${INFO}Note:${RESET}      Your phone must stay online (it's a web bridge)"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/whatsapp/authentication.html"
+                    echo -e ""
+                    ;;
+                signal)
+                    echo -e "   ${SUCCESS}── Signal ───────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @signalbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}link${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    The bot sends a link — open it, scan QR in Signal"
+                    echo -e "   ${INFO}           (Signal → Settings → Linked Devices → +)${RESET}"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/signal/authentication.html"
+                    echo -e ""
+                    ;;
+                slack)
+                    echo -e "   ${SUCCESS}── Slack ────────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @slackbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Follow the OAuth link to authorize your Slack workspace"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/slack/authentication.html"
+                    echo -e ""
+                    ;;
+                instagram)
+                    echo -e "   ${SUCCESS}── Instagram ────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @instagrambot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Enter your Instagram username when prompted"
+                    echo -e "   ${INFO}Step 3:${RESET}    Enter your Instagram password"
+                    echo -e "   ${INFO}2FA:${RESET}       Enter the 2FA code if your account uses it"
+                    echo -e "   ${WARNING}Note:${RESET}      Instagram actively restricts automation — use at own risk"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/instagram/authentication.html"
+                    echo -e ""
+                    ;;
             esac
         done
     fi
-    
-    # TURN LAN access status
-    if [[ "$TURN_LAN_ACCESS" =~ ^[Yy]$ ]]; then
-        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  TURN LAN: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (local networks accessible)${RESET}"
-    else
-        echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  TURN LAN: ${ERROR}DISABLED${RESET}${NOTE_TEXT} (secure - recommended)${RESET}"
-    fi
-    
+
     # Log rotation status
     if [[ "$SETUP_LOG_ROTATION" =~ ^[Yy]$ ]]; then
         echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Log rotation: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (logs managed automatically)${RESET}"
@@ -711,75 +929,7 @@ DOCKERDAEMONEOF
 # CONFIGURATION GENERATION FUNCTIONS                                           #
 ################################################################################
 
-# Generate Coturn TURN/STUN server configuration
-generate_coturn_config() {
-    echo -e "\n${ACCENT}>> Generating Coturn configuration...${RESET}"
-    
-    cat > "$TARGET_DIR/coturn/turnserver.conf" << COTURNEOF
-# Coturn TURN/STUN Server Configuration
-# Optimized for Matrix Synapse video calls
-
-# Basic settings
-listening-ip=0.0.0.0
-relay-ip=$AUTO_LOCAL_IP
-external-ip=$AUTO_PUBLIC_IP
-listening-port=3478
-tls-listening-port=5349
-min-port=49152
-max-port=49252
-fingerprint
-lt-cred-mech
-use-auth-secret
-static-auth-secret=$TURN_SECRET
-realm=turn.$DOMAIN
-
-# Logging
-verbose
-log-file=stdout
-no-stdout-log
-
-# Security
-no-multicast-peers
-no-cli
-no-loopback-peers
-
-# Performance tuning
-total-quota=100
-bps-capacity=0
-stale-nonce=600
-
-# TLS settings (optional - uncomment if you have certificates)
-# cert=/etc/ssl/certs/turnserver.pem
-# pkey=/etc/ssl/private/turnserver.key
-# dh-file=/etc/ssl/certs/dhparam.pem
-# cipher-list="ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305"
-COTURNEOF
-
-    # Add LAN access restrictions if configured
-    if [[ "$TURN_LAN_ACCESS" =~ ^[Yy]$ ]]; then
-        cat >> "$TARGET_DIR/coturn/turnserver.conf" << 'COTURNLANEOF'
-
-# LAN access is ENABLED - following rules are commented out
-# denied-peer-ip=0.0.0.0-0.255.255.255
-# denied-peer-ip=10.0.0.0-10.255.255.255
-# denied-peer-ip=172.16.0.0-172.31.255.255
-# denied-peer-ip=192.168.0.0-192.168.255.255
-COTURNLANEOF
-    else
-        cat >> "$TARGET_DIR/coturn/turnserver.conf" << 'COTURNLANEOF'
-
-# LAN access is DISABLED (recommended for production)
-denied-peer-ip=0.0.0.0-0.255.255.255
-denied-peer-ip=10.0.0.0-10.255.255.255
-denied-peer-ip=172.16.0.0-172.31.255.255
-denied-peer-ip=192.168.0.0-192.168.255.255
-COTURNLANEOF
-    fi
-    
-    echo -e "   ${SUCCESS}✓ Coturn config created${RESET}"
-}
-
-# Generate LiveKit SFU configuration with multi-screenshare support
+# Generate LiveKit SFU configuration with built-in TURN/STUN and multi-screenshare support
 generate_livekit_config() {
     echo -e "\n${ACCENT}>> Generating LiveKit configuration...${RESET}"
     
@@ -807,13 +957,24 @@ logging:
 room:
   auto_create: true
   empty_timeout: 300
+
+# Built-in TURN/STUN server
+turn:
+  enabled: true
+  domain: REPLACE_TURN_DOMAIN
+  cert_file: ""
+  key_file: ""
+  tls_port: 5349
+  udp_port: 3478
+  external_tls: true
 LIVEKITEOF
 
     # Replace placeholders
     sed -i "s/REPLACE_LK_API_KEY/$LK_API_KEY/g" "$TARGET_DIR/livekit/livekit.yaml"
     sed -i "s/REPLACE_LK_API_SECRET/$LK_API_SECRET/g" "$TARGET_DIR/livekit/livekit.yaml"
+    sed -i "s/REPLACE_TURN_DOMAIN/turn.$DOMAIN/g" "$TARGET_DIR/livekit/livekit.yaml"
     
-    echo -e "   ${SUCCESS}✓ LiveKit config created - unlimited screenshares enabled${RESET}"
+    echo -e "   ${SUCCESS}✓ LiveKit config created - unlimited screenshares + built-in TURN/STUN enabled${RESET}"
 }
 
 # Generate Element Call configuration
@@ -846,10 +1007,98 @@ EOF
     echo -e "   ${SUCCESS}✓ Element Call config created${RESET}"
 }
 
+generate_media_repo_config() {
+    echo -e "\n${ACCENT}>> Generating Matrix Media Repo configuration...${RESET}"
+
+    mkdir -p "$TARGET_DIR/media-repo/data"
+
+    cat > "$TARGET_DIR/media-repo/config.yaml" << EOF
+# Matrix Media Repo configuration
+# Generated by matrix-stack-deploy v${SCRIPT_VERSION}
+
+repo:
+  bindAddress: "0.0.0.0"
+  port: 8000
+  logLevel: "info"
+  logToFile: false
+
+database:
+  postgres: "postgresql://${DB_USER}:${DB_PASS}@postgres/media_repo?sslmode=disable"
+
+homeservers:
+  - name: "${SERVER_NAME}"
+    csApi: "http://synapse:8008"
+    backoffAt: 10
+    adminApiKind: "matrix"
+
+admins:
+  - "@${ADMIN_USER}:${SERVER_NAME}"
+
+datastores:
+  - id: "local_storage"
+    type: "file"
+    enabled: true
+    forKinds: ["all"]
+    opts:
+      path: "/data"
+
+features:
+  MSC2246Async: false
+  MSC3916AuthenticatedMedia: true
+
+downloads:
+  maxBytes: 104857600  # 100MB
+  failureCacheMinutes: 5
+  expireAfterDays: 0   # 0 = never expire
+  defaultRangeChunkSizeBytes: 10485760  # 10MB
+
+thumbnails:
+  maxSourceBytes: 10485760  # 10MB
+  maxPixels: 32000000
+  types:
+    - "image/jpeg"
+    - "image/jpg"
+    - "image/png"
+    - "image/gif"
+    - "image/heif"
+    - "image/webp"
+
+urlPreviews:
+  enabled: true
+  maxPageSizeBytes: 10485760
+  previewUnsafeCerts: false
+  oEmbed: true
+
+rateLimit:
+  requestsPerSecond: 5
+  burst: 10
+
+metrics:
+  enabled: false
+
+federation:
+  backfillWorkers: 2
+EOF
+
+    echo -e "   ${SUCCESS}✓ Matrix Media Repo config created${RESET}"
+    echo -e "   ${INFO}ℹ  Using local file storage at ${TARGET_DIR}/media-repo/data${RESET}"
+    echo -e "   ${INFO}ℹ  To use S3, edit: ${TARGET_DIR}/media-repo/config.yaml${RESET}"
+}
+
 generate_element_web_config() {
     echo -e "\n${ACCENT}>> Generating Element Web configuration...${RESET}"
 
     mkdir -p "$TARGET_DIR/element-web"
+
+    # Build element_call config block conditionally
+    local ELEMENT_CALL_CONFIG=""
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        ELEMENT_CALL_CONFIG=",
+    \"element_call\": {
+        \"url\": \"https://$SUB_CALL.$DOMAIN\",
+        \"use_exclusively\": false
+    }"
+    fi
 
     cat > "$TARGET_DIR/element-web/config.json" << EOF
 {
@@ -871,11 +1120,7 @@ generate_element_web_config() {
     "features": {
         "feature_element_call_video_rooms": true,
         "feature_group_calls": true
-    },
-    "element_call": {
-        "url": "https://$SUB_CALL.$DOMAIN",
-        "use_exclusively": false
-    },
+    }${ELEMENT_CALL_CONFIG},
     "setting_defaults": {
         "MessageComposerInput.showStickersButton": false
     },
@@ -883,6 +1128,7 @@ generate_element_web_config() {
     "disable_login_language_selector": false,
     "disable_3pid_login": true,
     "showLabsSettings": true,
+    "registration_url": "https://$SUB_MAS.$DOMAIN/account/",
     "bug_report_endpoint_url": "https://element.io/bugreports/submit"
 }
 EOF
@@ -898,31 +1144,91 @@ generate_bridge_configs() {
     if [ ${#SELECTED_BRIDGES[@]} -eq 0 ]; then
         return
     fi
-    
+
     echo -e "\n${ACCENT}>> Generating bridge configurations...${RESET}"
-    
+
     mkdir -p "$TARGET_DIR/bridges"
-    
+
     for bridge in "${SELECTED_BRIDGES[@]}"; do
         case $bridge in
             discord|telegram|whatsapp|signal|slack|instagram)
-                # Generate registration file (suppress output)
                 mkdir -p "$TARGET_DIR/bridges/$bridge"
-                docker run --rm \
+
+                # Create a minimal config.yaml if it doesn't exist
+                if [ ! -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
+                    echo -e "   ${INFO}Creating minimal config for $bridge...${RESET}"
+                    cat > "$TARGET_DIR/bridges/$bridge/config.yaml" << BRIDGECONF
+# Minimal configuration for $bridge bridge
+# Generated by matrix-stack-deploy
+
+homeserver:
+    address: http://synapse:8008
+    domain: $DOMAIN
+appservice:
+    id: $bridge
+    bot_username: ${bridge}bot
+    port: 29318
+database:
+    type: sqlite3
+    uri: file:/data/bridge.db
+logging:
+    directory: ./logs
+BRIDGECONF
+                fi
+
+                # Generate the full config and registration
+                echo -e "   ${INFO}Generating $bridge registration...${RESET}"
+                if ! docker run --rm \
                     -v "$TARGET_DIR/bridges/$bridge:/data" \
                     dock.mau.dev/mautrix/$bridge:latest \
-                    /usr/bin/mautrix-$bridge -g -c /data/config.yaml -r /data/registration.yaml > /dev/null 2>&1
-                
-                # Update config with homeserver details
+                    /usr/bin/mautrix-$bridge -g -c /data/config.yaml -r /data/registration.yaml > "$TARGET_DIR/bridges/$bridge/generate.log" 2>&1; then
+                    echo -e "   ${ERROR}✗ Failed to generate $bridge bridge config. See $TARGET_DIR/bridges/$bridge/generate.log${RESET}"
+                else
+                    rm -f "$TARGET_DIR/bridges/$bridge/generate.log"
+                    # Verify the registration file was created
+                    if [ -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ]; then
+                        echo -e "   ${SUCCESS}✓ $bridge registration created${RESET}"
+                    else
+                        echo -e "   ${WARNING}⚠️  $bridge registration.yaml not found after generation${RESET}"
+                    fi
+                fi
+
+                # Update config with correct homeserver details (ensures any placeholders are replaced)
                 sed -i "s|address: https://matrix.example.com|address: http://synapse:8008|g" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
                 sed -i "s|domain: example.com|domain: $DOMAIN|g" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
-                
-                # Capitalize first letter for display
+
+                # Set bot username in bridge config so Synapse recognises it
+                sed -i "s|username: mautrix${bridge}bot|username: ${bridge}bot|g" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+
                 BRIDGE_NAME="$(tr '[:lower:]' '[:upper:]' <<< ${bridge:0:1})${bridge:1}"
                 echo -e "${SUCCESS}   ✓ $BRIDGE_NAME bridge configured${RESET}"
                 ;;
         esac
     done
+
+    # Ensure bridge files are readable by Synapse (UID 991)
+    if [ -d "$TARGET_DIR/bridges" ]; then
+        find "$TARGET_DIR/bridges" -type f -exec chmod 644 {} \;
+        find "$TARGET_DIR/bridges" -type d -exec chmod 755 {} \;
+        echo -e "   ${SUCCESS}✓ Bridge file permissions set (readable by Synapse)${RESET}"
+    fi
+
+    # Register all bridge appservice files with Synapse.
+    echo -e "\n${ACCENT}   >> Registering bridges with Synapse (appservice_config_files)...${RESET}"
+    local AS_BLOCK="app_service_config_files:"
+    for bridge in "${SELECTED_BRIDGES[@]}"; do
+        local REG_FILE="/data/bridges/${bridge}/registration.yaml"
+        AS_BLOCK="${AS_BLOCK}
+  - ${REG_FILE}"
+    done
+
+    # Append to homeserver.yaml (only if not already present)
+    if ! grep -q "app_service_config_files:" "$TARGET_DIR/synapse/homeserver.yaml" 2>/dev/null; then
+        printf "\n%s\n" "$AS_BLOCK" >> "$TARGET_DIR/synapse/homeserver.yaml"
+        echo -e "${SUCCESS}   ✓ Appservice registration written to homeserver.yaml${RESET}"
+    else
+        echo -e "${INFO}   ℹ  app_service_config_files already present in homeserver.yaml${RESET}"
+    fi
 }
 
 # Setup nginx to serve well-known files on the base domain
@@ -1040,14 +1346,25 @@ generate_mas_config() {
     # Ensure MAS directory exists
     mkdir -p "$TARGET_DIR/mas"
 
-    # Generate EC signing key via openssl (MAS v1.8.0+ requires real EC/RSA keys, not hex)
-    # MAS requires PKCS#8 format (BEGIN PRIVATE KEY), NOT legacy EC format (BEGIN EC PRIVATE KEY)
-    MAS_EC_KEY=$(openssl ecparam -name prime256v1 -genkey 2>/dev/null | openssl pkcs8 -topk8 -nocrypt 2>/dev/null)
-    if [ -z "$MAS_EC_KEY" ]; then
-        echo -e "   ${ERROR}✗ Failed to generate EC key - is openssl installed?${RESET}"
+    # Generate EC signing key via openssl (MAS v1.8.0+ requires PKCS#8 format)
+    # Write to temp file first so we can verify before embedding
+    local KEY_TMP
+    KEY_TMP=$(mktemp)
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$KEY_TMP" 2>/dev/null
+    MAS_EC_KEY=$(cat "$KEY_TMP")
+    rm -f "$KEY_TMP"
+
+    # Fallback: try the older ecparam pipeline if genpkey isn't available
+    if [ -z "$MAS_EC_KEY" ] || ! echo "$MAS_EC_KEY" | grep -q "BEGIN PRIVATE KEY"; then
+        MAS_EC_KEY=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null \
+                     | openssl pkcs8 -topk8 -nocrypt 2>/dev/null)
+    fi
+
+    if [ -z "$MAS_EC_KEY" ] || ! echo "$MAS_EC_KEY" | grep -q "BEGIN PRIVATE KEY"; then
+        echo -e "   ${ERROR}✗ Failed to generate EC signing key — is openssl installed and working?${RESET}"
         exit 1
     fi
-    echo -e "   ${SUCCESS}✓ EC signing key generated${RESET}"
+    echo -e "   ${SUCCESS}✓ EC signing key generated (PKCS#8 / prime256v1)${RESET}"
     
     # Build email configuration
     if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]] && [[ -n "$SMTP_HOST" ]]; then
@@ -1076,8 +1393,23 @@ generate_mas_config() {
     else
         CAPTCHA_CONFIG="  # captcha: disabled"
     fi
-    
-    # Write the config with proper random ULID for Element Call
+
+    # Build optional Element Call client block
+    local ELEMENT_CALL_CLIENT_BLOCK=""
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        ELEMENT_CALL_CLIENT_BLOCK="
+  - client_id: \"$ELEMENT_CALL_CLIENT_ID\"
+    client_auth_method: none
+    client_uri: \"https://$SUB_CALL.$DOMAIN/\"
+    redirect_uris:
+      - \"https://$SUB_CALL.$DOMAIN/\"
+    grant_types:
+      - authorization_code
+      - refresh_token
+    response_types:
+      - code"
+    fi
+
     cat > "$TARGET_DIR/mas/config.yaml" << EOF
 # MAS (Matrix Authentication Service) Configuration
 
@@ -1134,17 +1466,7 @@ clients:
   - client_id: "0000000000000000000SYNAPSE"
     client_auth_method: client_secret_basic
     client_secret: "$MAS_SECRET"
-
-  - client_id: "$ELEMENT_CALL_CLIENT_ID"
-    client_auth_method: none
-    client_uri: "https://$SUB_CALL.$DOMAIN/"
-    redirect_uris:
-      - "https://$SUB_CALL.$DOMAIN/"
-    grant_types:
-      - authorization_code
-      - refresh_token
-    response_types:
-      - code
+$ELEMENT_CALL_CLIENT_BLOCK
 
   - client_id: "$ELEMENT_WEB_CLIENT_ID"
     client_auth_method: none
@@ -1217,6 +1539,20 @@ EOSQL
 echo "PostgreSQL: matrix_auth database created (if needed)"
 PGINITEOF
 
+    # Add media_repo database if media repo is enabled
+    if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
+        cat >> "$TARGET_DIR/postgres_init/01-create-databases.sh" << 'PGINITEOF2'
+
+# Create media_repo database for Matrix Media Repo
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    SELECT 'CREATE DATABASE media_repo'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'media_repo')\gexec
+EOSQL
+
+echo "PostgreSQL: media_repo database created (if needed)"
+PGINITEOF2
+    fi
+
     chmod +x "$TARGET_DIR/postgres_init/01-create-databases.sh"
     echo -e "   ${SUCCESS}✓ PostgreSQL init script created${RESET}"
 }
@@ -1224,19 +1560,21 @@ PGINITEOF
 # Generate Docker Compose configuration
 generate_docker_compose() {
     echo -e "\n${ACCENT}>> Generating Docker Compose configuration...${RESET}"
-    
+
     cat > "$TARGET_DIR/compose.yaml" << 'COMPOSEEOF'
 ################################################################################
 #                                                                              #
 #                    MATRIX SYNAPSE STACK - DOCKER COMPOSE                     #
 #                                                                              #
-#  Production-ready configuration with:                                        #
-#  • Three PostgreSQL databases (synapse, matrix_auth, syncv3)                 #
-#  • MAS for iOS/Android native app support                                    #
-#  • LiveKit SFU with multi-screenshare support                                #
-#  • Element Call for WebRTC video conferencing                                #
-#  • Coturn TURN/STUN server                                                   #
-#  • Synapse Admin web interface                                               #
+#  Services:                                                                   #
+#  • PostgreSQL (synapse, matrix_auth, syncv3 databases)                       #
+#  • Synapse Matrix homeserver                                                 #
+#  • MAS - Matrix Authentication Service                                       #
+#  • LiveKit SFU with built-in TURN/STUN                                       #
+#  • LiveKit JWT Service                                                       #
+#  • Element Web                                                               #
+#  • Element Call (optional)                                                   #
+#  • Element Admin (optional)                                                  #
 #                                                                              #
 ################################################################################
 
@@ -1269,7 +1607,9 @@ services:
     image: matrixdotorg/synapse:latest
     restart: unless-stopped
     user: "991:991"
-    volumes: [ "./synapse:/data" ]
+    volumes:
+      - ./synapse:/data
+      - ./bridges:/data/bridges
     ports: [ "8008:8008" ]
     depends_on:
       postgres:
@@ -1286,53 +1626,37 @@ services:
     labels:
       com.docker.compose.project: "matrix-stack"
 
-  # Synapse Admin Web Interface
-  synapse-admin:
-    container_name: synapse-admin
-    image: awesometechnologies/synapse-admin:latest
-    restart: unless-stopped
-    ports: [ "8009:80" ]
-    networks: [ matrix-net ]
-    labels:
-      com.docker.compose.project: "matrix-stack"
-
-  # Coturn TURN/STUN Server
-  coturn:
-    container_name: coturn
-    image: coturn/coturn:latest
-    restart: unless-stopped
-    ports: 
-      - "3478:3478/tcp"
-      - "3478:3478/udp"
-      - "49152-49252:49152-49252/udp"
-    volumes: [ "./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro" ]
-    networks: [ matrix-net ]
-    labels:
-      com.docker.compose.project: "matrix-stack"
-
-  # LiveKit SFU Server - Multi-screenshare support
+  # LiveKit SFU Server - Multi-screenshare support + built-in TURN/STUN
   livekit:
     container_name: livekit
     image: livekit/livekit-server:latest
     restart: unless-stopped
     command: --config /etc/livekit.yaml
     volumes: [ "./livekit/livekit.yaml:/etc/livekit.yaml:ro" ]
-    ports: 
+    ports:
       - "7880:7880"
       - "7881:7881/tcp"
       - "7882:7882/udp"
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/tcp"
       - "50000-50050:50000-50050/udp"
     networks: [ matrix-net ]
     labels:
       com.docker.compose.project: "matrix-stack"
 
-  # Element Call - WebRTC Video Conferencing
-  element-call:
-    container_name: element-call
-    image: ghcr.io/element-hq/element-call:latest
+  # LiveKit JWT Service - Token generation for LiveKit
+  livekit-jwt:
+    container_name: livekit-jwt
+    image: ghcr.io/element-hq/lk-jwt-service:latest
     restart: unless-stopped
-    volumes: [ "./element-call/config.json:/app/config.json:ro" ]
-    ports: [ "8007:8080" ]
+    environment:
+      - LIVEKIT_HOST=wss://REPLACE_SUB_LIVEKIT.REPLACE_DOMAIN
+      - LIVEKIT_KEY=REPLACE_LK_API_KEY
+      - LIVEKIT_SECRET=REPLACE_LK_API_SECRET
+      - LIVEKIT_JWT_PORT=8080
+    ports: [ "8080:8080" ]
+    depends_on: [ livekit ]
     networks: [ matrix-net ]
     labels:
       com.docker.compose.project: "matrix-stack"
@@ -1373,6 +1697,62 @@ networks:
       com.docker.compose.project: "matrix-stack"
 COMPOSEEOF
 
+    # Replace placeholders with actual values
+    sed -i "s/REPLACE_DB_PASS/$DB_PASS/g" "$TARGET_DIR/compose.yaml"
+    sed -i "s/REPLACE_SUB_LIVEKIT/$SUB_LIVEKIT/g" "$TARGET_DIR/compose.yaml"
+    sed -i "s/REPLACE_DOMAIN/$DOMAIN/g" "$TARGET_DIR/compose.yaml"
+    sed -i "s/REPLACE_LK_API_KEY/$LK_API_KEY/g" "$TARGET_DIR/compose.yaml"
+    sed -i "s/REPLACE_LK_API_SECRET/$LK_API_SECRET/g" "$TARGET_DIR/compose.yaml"
+
+    # Insert Element Admin if enabled
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        sed -i '/^networks:/i\
+\
+  # Element Admin Web Interface\
+  element-admin:\
+    container_name: element-admin\
+    image: oci.element.io/element-admin:latest\
+    restart: unless-stopped\
+    ports: [ "8014:80" ]\
+    networks: [ matrix-net ]\
+    labels:\
+      com.docker.compose.project: "matrix-stack"\
+' "$TARGET_DIR/compose.yaml"
+    fi
+
+    # Insert Synapse Admin if enabled
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        sed -i '/^networks:/i\
+\
+  # Synapse Admin Web Interface\
+  synapse-admin:\
+    container_name: synapse-admin\
+    image: awesometechnologies/synapse-admin:latest\
+    restart: unless-stopped\
+    ports: [ "8009:80" ]\
+    networks: [ matrix-net ]\
+    labels:\
+      com.docker.compose.project: "matrix-stack"\
+' "$TARGET_DIR/compose.yaml"
+    fi
+
+    # Insert Element Call if enabled
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        sed -i '/^networks:/i\
+\
+  # Element Call - Standalone WebRTC Video Conferencing UI\
+  element-call:\
+    container_name: element-call\
+    image: ghcr.io/element-hq/element-call:latest\
+    restart: unless-stopped\
+    volumes: [ "./element-call/config.json:/app/config.json:ro" ]\
+    ports: [ "8007:8080" ]\
+    networks: [ matrix-net ]\
+    labels:\
+      com.docker.compose.project: "matrix-stack"\
+' "$TARGET_DIR/compose.yaml"
+    fi
+
     # Add Sliding Sync if enabled
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         sed -i '/^networks:/i\
@@ -1398,7 +1778,7 @@ COMPOSEEOF
       com.docker.compose.project: "matrix-stack"\
 ' "$TARGET_DIR/compose.yaml"
     fi
-    
+
     # Add Matrix Media Repo if enabled
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         mkdir -p "$TARGET_DIR/media-repo"
@@ -1415,30 +1795,38 @@ COMPOSEEOF
     ports: [ "8013:8000" ]\
     environment:\
       REPO_CONFIG: /config/media-repo.yaml\
+    depends_on:\
+      postgres:\
+        condition: service_healthy\
+      synapse:\
+        condition: service_healthy\
     networks: [ matrix-net ]\
     labels:\
       com.docker.compose.project: "matrix-stack"\
 ' "$TARGET_DIR/compose.yaml"
     fi
 
-    # Replace database password placeholder
-    sed -i "s/REPLACE_DB_PASS/$DB_PASS/g" "$TARGET_DIR/compose.yaml"
-    
-    # Print all success messages together
+    # Print success messages
     echo -e "   ${SUCCESS}✓ Docker Compose config created${RESET}"
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo -e "   ${SUCCESS}✓ Element Admin included${RESET}"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo -e "   ${SUCCESS}✓ Synapse Admin included${RESET}"
+    fi
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo -e "   ${SUCCESS}✓ Element Call included${RESET}"
+    fi
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         echo -e "   ${SUCCESS}✓ Sliding Sync Proxy included${RESET}"
     fi
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         echo -e "   ${SUCCESS}✓ Matrix Media Repo included${RESET}"
     fi
-    
+
     # Add bridges if selected
     if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
         for bridge in "${SELECTED_BRIDGES[@]}"; do
-            # Capitalize first letter for service name
-            BRIDGE_NAME="$(tr '[:lower:]' '[:upper:]' <<< ${bridge:0:1})${bridge:1}"
-            
             case $bridge in
                 discord|telegram|whatsapp|signal|slack|instagram)
                     sed -i '/^networks:/i\
@@ -1460,11 +1848,10 @@ COMPOSEEOF
                     ;;
             esac
         done
-        
-        # Format bridge names with proper capitalization
+
+        # Format bridge names for display
         BRIDGE_NAMES=""
         for bridge in "${SELECTED_BRIDGES[@]}"; do
-            # Capitalize first letter
             BRIDGE_NAME="$(tr '[:lower:]' '[:upper:]' <<< ${bridge:0:1})${bridge:1}"
             if [ -z "$BRIDGE_NAMES" ]; then
                 BRIDGE_NAMES="$BRIDGE_NAME"
@@ -1472,12 +1859,11 @@ COMPOSEEOF
                 BRIDGE_NAMES="$BRIDGE_NAMES ${SUCCESS}*${RESET} $BRIDGE_NAME"
             fi
         done
-        
         echo -e "   ${SUCCESS}✓ ${#SELECTED_BRIDGES[@]} bridge(s) added${RESET}"
         echo -e "     ${CHOICE_COLOR}$BRIDGE_NAMES${RESET}"
     fi
 
-    # Add NPM to compose if user has no proxy and chose NPM
+    # Add proxy services if needed
     if [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "npm" ]]; then
         sed -i '/^networks:/i\\
 \\
@@ -1589,12 +1975,12 @@ database:
     cp_min: 5
     cp_max: 10
 
-# TURN/STUN Configuration for NAT traversal
+# TURN/STUN Configuration - handled by LiveKit's built-in TURN server
+# LiveKit manages TURN credentials internally; no shared secret required
 turn_uris:
   - "turn:turn.$DOMAIN:3478?transport=udp"
   - "turn:turn.$DOMAIN:3478?transport=tcp"
   - "turns:turn.$DOMAIN:5349?transport=tcp"
-turn_shared_secret: "$TURN_SECRET"
 turn_user_lifetime: 86400000
 turn_allow_guests: false
 
@@ -1647,14 +2033,10 @@ matrix_authentication_service:
   account_management_url: https://$SUB_MAS.$DOMAIN/account
 
 ################################################################################
-# LIVEKIT SFU - Unlimited Multi-Screenshare Video Calling                     #
+# LIVEKIT SFU - Unlimited Multi-Screenshare Video Calling
 ################################################################################
 
-# Element Call widget configuration
-widget_urls:
-  - https://$SUB_CALL.$DOMAIN
-
-# LiveKit SFU configuration (for Element Call)
+# LiveKit SFU configuration
 livekit:
   url: https://$SUB_LIVEKIT.$DOMAIN
   livekit_api_key: $LK_API_KEY
@@ -1663,6 +2045,33 @@ livekit:
 # Additional call configuration
 allow_guest_access: false
 SYNAPSEEOF
+
+    # Add widget_urls for Element Call if enabled
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        cat >> "$TARGET_DIR/synapse/homeserver.yaml" << WIDGETEOF
+
+# Element Call widget URL
+widget_urls:
+  - https://$SUB_CALL.$DOMAIN
+WIDGETEOF
+    fi
+
+    # Delegate media to Matrix Media Repo if enabled
+    if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
+        cat >> "$TARGET_DIR/synapse/homeserver.yaml" << MEDIAEOF
+
+################################################################################
+# MATRIX MEDIA REPO - External media handling                                 #
+################################################################################
+
+# Delegate media to external media repo
+media_repository_url: "http://matrix-media-repo:8000"
+
+# Disable Synapse's built-in media handling
+enable_media_repo: false
+MEDIAEOF
+        echo -e "   ${INFO}ℹ  Synapse configured to delegate media to matrix-media-repo${RESET}"
+    fi
     
     # Set correct ownership
     chown -R 991:991 "$TARGET_DIR/synapse"
@@ -1732,8 +2141,33 @@ caddy_autosetup() {
     echo -e "\n${ACCENT}>> Configuring Caddy...${RESET}"
     mkdir -p "$TARGET_DIR/caddy"
 
-    # Build Caddyfile with sliding sync / media repo blocks if enabled
+    # Build Caddyfile with optional service blocks
     local EXTRA_BLOCKS=""
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        EXTRA_BLOCKS+="
+# Element Call
+$SUB_CALL.$DOMAIN {
+    reverse_proxy $AUTO_LOCAL_IP:8007
+    header { Access-Control-Allow-Origin * }
+}
+"
+    fi
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        EXTRA_BLOCKS+="
+# Element Admin
+$SUB_ELEMENT_ADMIN.$DOMAIN {
+    reverse_proxy $AUTO_LOCAL_IP:8014
+}
+"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        EXTRA_BLOCKS+="
+# Synapse Admin
+$SUB_SYNAPSE_ADMIN.$DOMAIN {
+    reverse_proxy $AUTO_LOCAL_IP:8009
+}
+"
+    fi
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         EXTRA_BLOCKS+="
 # Sliding Sync Proxy
@@ -1784,12 +2218,6 @@ $SUB_MAS.$DOMAIN {
 # Element Web
 $SUB_ELEMENT.$DOMAIN {
     reverse_proxy $AUTO_LOCAL_IP:8012
-}
-
-# Element Call
-$SUB_CALL.$DOMAIN {
-    reverse_proxy $AUTO_LOCAL_IP:8007
-    header { Access-Control-Allow-Origin * }
 }
 
 # LiveKit SFU
@@ -1862,6 +2290,48 @@ TRAEFIKSTATICEOF
     # Build optional service/router entries
     local EXTRA_ROUTERS=""
     local EXTRA_SERVICES=""
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        EXTRA_ROUTERS+="
+    element-call:
+      rule: \"Host(\`$SUB_CALL.$DOMAIN\`)\"
+      service: element-call
+      entryPoints: [\"websecure\"]
+      tls:
+        certResolver: letsencrypt"
+        EXTRA_SERVICES+="
+    element-call:
+      loadBalancer:
+        servers:
+          - url: \"http://$AUTO_LOCAL_IP:8007\""
+    fi
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        EXTRA_ROUTERS+="
+    element-admin:
+      rule: \"Host(\`$SUB_ELEMENT_ADMIN.$DOMAIN\`)\"
+      service: element-admin
+      entryPoints: [\"websecure\"]
+      tls:
+        certResolver: letsencrypt"
+        EXTRA_SERVICES+="
+    element-admin:
+      loadBalancer:
+        servers:
+          - url: \"http://$AUTO_LOCAL_IP:8014\""
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        EXTRA_ROUTERS+="
+    synapse-admin:
+      rule: \"Host(\`$SUB_SYNAPSE_ADMIN.$DOMAIN\`)\"
+      service: synapse-admin
+      entryPoints: [\"websecure\"]
+      tls:
+        certResolver: letsencrypt"
+        EXTRA_SERVICES+="
+    synapse-admin:
+      loadBalancer:
+        servers:
+          - url: \"http://$AUTO_LOCAL_IP:8009\""
+    fi
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         EXTRA_ROUTERS+="
     sliding-sync:
@@ -1916,13 +2386,6 @@ http:
       tls:
         certResolver: letsencrypt
 
-    element-call:
-      rule: "Host(\`$SUB_CALL.$DOMAIN\`)"
-      service: element-call
-      entryPoints: ["websecure"]
-      tls:
-        certResolver: letsencrypt
-
     livekit:
       rule: "Host(\`$SUB_LIVEKIT.$DOMAIN\`)"
       service: livekit
@@ -1962,11 +2425,6 @@ $EXTRA_ROUTERS
       loadBalancer:
         servers:
           - url: "http://$AUTO_LOCAL_IP:8012"
-
-    element-call:
-      loadBalancer:
-        servers:
-          - url: "http://$AUTO_LOCAL_IP:8007"
 
     livekit:
       loadBalancer:
@@ -2182,21 +2640,20 @@ LKCONF
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
     read -r
 
-    ##########################################################################
-    # ELEMENT CALL
-    ##########################################################################
-    clear
-    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-    echo -e "${BANNER}│               NPM SETUP - ELEMENT CALL                       │${RESET}"
-    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
-    echo -e "\n${ACCENT}Create Proxy Host:${RESET}"
-    echo -e "   Domain:     ${INFO}$SUB_CALL.$DOMAIN${RESET}"
-    echo -e "   Forward to: ${INFO}http://$PROXY_IP:8007${RESET}"
-    echo -e "   Enable:     Websockets, SSL (Force HTTPS)"
-    echo -e "   ${WARNING}⚠  Do NOT enable Block Exploits / ModSecurity — it breaks Element Call${RESET}"
-    echo -e "   ${WARNING}Note: Element Call is a widget launched from Element Web — not a standalone login page${RESET}\n"
-    echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
-    print_code << 'CALLCONF'
+    # Optional: Element Call
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        clear
+        echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${BANNER}│               NPM SETUP - ELEMENT CALL                       │${RESET}"
+        echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+        echo -e "\n${ACCENT}Create Proxy Host:${RESET}"
+        echo -e "   Domain:     ${INFO}$SUB_CALL.$DOMAIN${RESET}"
+        echo -e "   Forward to: ${INFO}http://$PROXY_IP:8007${RESET}"
+        echo -e "   Enable:     Websockets, SSL (Force HTTPS)"
+        echo -e "   ${WARNING}⚠  Do NOT enable Block Exploits / ModSecurity — it breaks Element Call${RESET}"
+        echo -e "   ${WARNING}Note: Element Call is a widget launched from Element Web — not a standalone login page${RESET}\n"
+        echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
+        print_code << 'CALLCONF'
 # Element Call - iframe widget, requires CORS and frame embedding
 proxy_hide_header Access-Control-Allow-Origin;
 proxy_hide_header Access-Control-Allow-Methods;
@@ -2211,8 +2668,9 @@ proxy_set_header Connection "upgrade";
 proxy_set_header Host $host;
 proxy_set_header X-Forwarded-Proto $scheme;
 CALLCONF
-    echo -e "${WARNING}Press ENTER to continue...${RESET}"
-    read -r
+        echo -e "${WARNING}Press ENTER to continue...${RESET}"
+        read -r
+    fi
 
     ##########################################################################
     # ELEMENT WEB
@@ -2238,6 +2696,37 @@ location = /config.json {
 ELEMENTWEBCONF
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
     read -r
+
+    # Optional: Element Admin
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        clear
+        echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${BANNER}│               NPM SETUP - ELEMENT ADMIN                      │${RESET}"
+        echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+        echo -e "\n${ACCENT}Create Proxy Host:${RESET}"
+        echo -e "   Domain:     ${INFO}$SUB_ELEMENT_ADMIN.$DOMAIN${RESET}"
+        echo -e "   Forward to: ${INFO}http://$PROXY_IP:8014${RESET}"
+        echo -e "   Enable:     SSL (Force HTTPS)\n"
+        echo -e "${SUCCESS}✓ No advanced configuration needed${RESET}"
+        echo -e "${WARNING}Press ENTER to continue...${RESET}"
+        read -r
+    fi
+
+    # Optional: Synapse Admin
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        clear
+        echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${BANNER}│               NPM SETUP - SYNAPSE ADMIN                      │${RESET}"
+        echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+        echo -e "\n${ACCENT}Create Proxy Host:${RESET}"
+        echo -e "   Domain:     ${INFO}$SUB_SYNAPSE_ADMIN.$DOMAIN${RESET}"
+        echo -e "   Forward to: ${INFO}http://$PROXY_IP:8009${RESET}"
+        echo -e "   Enable:     SSL (Force HTTPS)"
+        echo -e "   ${INFO}ℹ  Log in with your Matrix admin user credentials${RESET}\n"
+        echo -e "${SUCCESS}✓ No advanced configuration needed${RESET}"
+        echo -e "${WARNING}Press ENTER to continue...${RESET}"
+        read -r
+    fi
 
     # Optional: Sliding Sync
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
@@ -2278,58 +2767,37 @@ show_caddy_guide() {
     echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BANNER}│                      CADDY SETUP GUIDE                       │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
-    
+
     echo -e "\n${ACCENT}Caddyfile Configuration (${INFO}/etc/caddy/Caddyfile${ACCENT}):${RESET}\n"
 
     print_code << CADDYCONF
-# BASE DOMAIN - Serves well-known for Matrix discovery
+# BASE DOMAIN - Matrix well-known + redirect to Element Web
 $DOMAIN {
-    # Well-known endpoints for Matrix federation and client discovery
     handle /.well-known/matrix/server {
         header Content-Type application/json
         header Access-Control-Allow-Origin *
         respond '{"m.server": "$SUB_MATRIX.$DOMAIN:443"}'
     }
-    
     handle /.well-known/matrix/client {
         header Content-Type application/json
         header Access-Control-Allow-Origin *
-        respond '{
-            "m.homeserver": {
-                "base_url": "https://$SUB_MATRIX.$DOMAIN"
-            },
-            "m.identity_server": {
-                "base_url": "https://vector.im"
-            },
-            "org.matrix.msc3575.proxy": {
-                "url": "https://$SUB_SLIDING_SYNC.$DOMAIN"
-            },
-            "org.matrix.msc4143.rtc_focus": {
-                "url": "https://$SUB_LIVEKIT.$DOMAIN"
-            }
-        }'
+        respond '{"m.homeserver":{"base_url":"https://$SUB_MATRIX.$DOMAIN"},"m.identity_server":{"base_url":"https://vector.im"},"m.authentication":{"issuer":"https://$SUB_MAS.$DOMAIN/","account":"https://$SUB_MAS.$DOMAIN/account"},"org.matrix.msc3575.proxy":{"url":"https://$SUB_SLIDING_SYNC.$DOMAIN"},"org.matrix.msc4143.rtc_focus":{"url":"https://$SUB_LIVEKIT.$DOMAIN"}}'
     }
-
-    # Optional: Redirect root to Element Call
     handle {
-        redir https://$SUB_CALL.$DOMAIN
+        redir https://$SUB_ELEMENT.$DOMAIN
     }
 }
 
 # Matrix Homeserver
 $SUB_MATRIX.$DOMAIN {
     reverse_proxy $PROXY_IP:8008
-    header {
-        Access-Control-Allow-Origin *
-    }
+    header { Access-Control-Allow-Origin * }
 }
 
 # MAS Authentication Service
 $SUB_MAS.$DOMAIN {
     reverse_proxy $PROXY_IP:8010
-    header {
-        Access-Control-Allow-Origin *
-    }
+    header { Access-Control-Allow-Origin * }
 }
 
 # LiveKit SFU
@@ -2342,17 +2810,43 @@ $SUB_LIVEKIT.$DOMAIN {
     }
 }
 
+# Element Web
+$SUB_ELEMENT.$DOMAIN {
+    reverse_proxy $PROXY_IP:8012
+}
+CADDYCONF
+
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo ""
+        cat << CALLCONF
 # Element Call
 $SUB_CALL.$DOMAIN {
     reverse_proxy $PROXY_IP:8007
-    header {
-        Access-Control-Allow-Origin *
-    }
+    header { Access-Control-Allow-Origin * }
 }
+CALLCONF
+    fi
 
-CADDYCONF
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo ""
+        cat << ADMINCONF
+# Element Admin
+$SUB_ELEMENT_ADMIN.$DOMAIN {
+    reverse_proxy $PROXY_IP:8014
+}
+ADMINCONF
+    fi
 
-    # Add Sliding Sync if enabled
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo ""
+        cat << SYNADMINCONF
+# Synapse Admin
+$SUB_SYNAPSE_ADMIN.$DOMAIN {
+    reverse_proxy $PROXY_IP:8009
+}
+SYNADMINCONF
+    fi
+
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         echo ""
         cat << SLIDINGCONF
@@ -2362,8 +2856,7 @@ $SUB_SLIDING_SYNC.$DOMAIN {
 }
 SLIDINGCONF
     fi
-    
-    # Add Media Repo if enabled
+
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         echo ""
         cat << MEDIACONF
@@ -2373,10 +2866,10 @@ $SUB_MEDIA_REPO.$DOMAIN {
 }
 MEDIACONF
     fi
-    
+
     echo ""
     print_code << TURNCONF
-# TURN (Do not proxy - DNS only)
+# TURN (DNS only - do not proxy)
 turn.$DOMAIN {
     reverse_proxy $PROXY_IP:3478
 }
@@ -2432,20 +2925,11 @@ http:
       tls:
         certResolver: letsencrypt
 
-    element-call:
-      rule: "Host(\`$SUB_CALL.$DOMAIN\`)"
-      service: element-call
-      entryPoints: ["websecure"]
-      tls:
-        certResolver: letsencrypt
-
   services:
-    # Special service for base domain that returns well-known JSON
     base-domain-service:
       loadBalancer:
         servers:
-          - url: "http://$PROXY_IP:80"  # Dummy backend, middleware overrides
-        # OR use a file server if you prefer
+          - url: "http://$PROXY_IP:80"
 
     matrix:
       loadBalancer:
@@ -2462,63 +2946,107 @@ http:
         servers:
           - url: "http://$PROXY_IP:7880"
 
-    element-call:
-      loadBalancer:
-        servers:
-          - url: "http://$PROXY_IP:8007"
-
   middlewares:
     wellknown-headers:
       headers:
         customResponseHeaders:
           Access-Control-Allow-Origin: "*"
           Content-Type: "application/json"
-
-    # You'll need to add file-based routing for well-known paths
-    # This is typically done with a file provider or additional routers
 TRAEFIKCONF
 
-    echo -e "\n${ACCENT}Note: For well-known endpoints, you may need to add file-based routing or use a separate file provider.${RESET}\n"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo ""
+        cat << CALLCONF
+# Add to routers section:
+    element-call:
+      rule: "Host(\`$SUB_CALL.$DOMAIN\`)"
+      service: element-call
+      entryPoints: ["websecure"]
+      tls:
+        certResolver: letsencrypt
+# Add to services section:
+    element-call:
+      loadBalancer:
+        servers:
+          - url: "http://$PROXY_IP:8007"
+CALLCONF
+    fi
 
-    # Add Sliding Sync if enabled
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo ""
+        cat << ADMINCONF
+# Add to routers section:
+    element-admin:
+      rule: "Host(\`$SUB_ELEMENT_ADMIN.$DOMAIN\`)"
+      service: element-admin
+      entryPoints: ["websecure"]
+      tls:
+        certResolver: letsencrypt
+# Add to services section:
+    element-admin:
+      loadBalancer:
+        servers:
+          - url: "http://$PROXY_IP:8014"
+ADMINCONF
+    fi
+
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo ""
+        cat << SYNADMINCONF
+# Add to routers section:
+    synapse-admin:
+      rule: "Host(\`$SUB_SYNAPSE_ADMIN.$DOMAIN\`)"
+      service: synapse-admin
+      entryPoints: ["websecure"]
+      tls:
+        certResolver: letsencrypt
+# Add to services section:
+    synapse-admin:
+      loadBalancer:
+        servers:
+          - url: "http://$PROXY_IP:8009"
+SYNADMINCONF
+    fi
+
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         echo ""
         cat << SLIDINGCONF
+# Add to routers section:
     sliding-sync:
       rule: "Host(\`$SUB_SLIDING_SYNC.$DOMAIN\`)"
       service: sliding-sync
       entryPoints: ["websecure"]
       tls:
         certResolver: letsencrypt
-# In services section, add:
+# Add to services section:
     sliding-sync:
       loadBalancer:
         servers:
           - url: "http://$PROXY_IP:8011"
 SLIDINGCONF
     fi
-    
-    # Add Media Repo if enabled
+
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         echo ""
         cat << MEDIACONF
+# Add to routers section:
     media-repo:
       rule: "Host(\`$SUB_MEDIA_REPO.$DOMAIN\`)"
       service: media-repo
       entryPoints: ["websecure"]
       tls:
         certResolver: letsencrypt
-# In services section, add:
+# Add to services section:
     media-repo:
       loadBalancer:
         servers:
           - url: "http://$PROXY_IP:8013"
 MEDIACONF
     fi
-    
+
     echo -e "\n${ACCENT}Restart Traefik:${RESET}"
     echo -e "${INFO}docker restart traefik${RESET}\n"
-    
+
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
     read -r
 }
@@ -2536,14 +3064,12 @@ tunnel: YOUR_TUNNEL_ID
 credentials-file: /root/.cloudflared/YOUR_TUNNEL_ID.json
 
 ingress:
-  # Base domain - serves well-known files
   - hostname: $DOMAIN
     path: /.well-known/matrix/server
     service: http_status:200
     originRequest:
       httpStatus: 200
       noTLSVerify: true
-    # cloudflared will need to serve the JSON directly
 
   - hostname: $DOMAIN
     path: /.well-known/matrix/client
@@ -2552,44 +3078,50 @@ ingress:
       httpStatus: 200
       noTLSVerify: true
 
-  # Main services
   - hostname: $SUB_MATRIX.$DOMAIN
     service: http://$PROXY_IP:8008
-  
+
   - hostname: $SUB_MAS.$DOMAIN
     service: http://$PROXY_IP:8010
-  
+
+  - hostname: $SUB_ELEMENT.$DOMAIN
+    service: http://$PROXY_IP:8012
+
   - hostname: $SUB_LIVEKIT.$DOMAIN
     service: http://$PROXY_IP:7880
-  
-  - hostname: $SUB_CALL.$DOMAIN
-    service: http://$PROXY_IP:8007
 CFCONF
 
-    echo -e "\n${ACCENT}Note: Cloudflare Tunnel has limited support for serving static JSON.${RESET}"
-    echo -e "${INFO}You may need to use a small web server (like nginx) on your origin to serve the well-known files.${RESET}\n"
-
-    # Add Sliding Sync if enabled
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo "  - hostname: $SUB_CALL.$DOMAIN"
+        echo "    service: http://$PROXY_IP:8007"
+    fi
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo "  - hostname: $SUB_ELEMENT_ADMIN.$DOMAIN"
+        echo "    service: http://$PROXY_IP:8014"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo "  - hostname: $SUB_SYNAPSE_ADMIN.$DOMAIN"
+        echo "    service: http://$PROXY_IP:8009"
+    fi
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         echo "  - hostname: $SUB_SLIDING_SYNC.$DOMAIN"
         echo "    service: http://$PROXY_IP:8011"
     fi
-    
-    # Add Media Repo if enabled
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         echo "  - hostname: $SUB_MEDIA_REPO.$DOMAIN"
         echo "    service: http://$PROXY_IP:8013"
     fi
-    
+
     print_code << 'CFTURNEOF'
-  - hostname: turn.$DOMAIN
-    service: http://$PROXY_IP:3478
   - service: http_status:404
 CFTURNEOF
-    
+
+    echo -e "\n${INFO}ℹ  Note: TURN (turn.$DOMAIN) must remain DNS only — do not route through Cloudflare Tunnel.${RESET}"
+    echo -e "${INFO}ℹ  Cloudflare Tunnel cannot serve static JSON for well-known. Use a local nginx or Synapse's built-in well-known.${RESET}\n"
+
     echo -e "\n${ACCENT}Restart tunnel:${RESET}"
     echo -e "${INFO}systemctl restart cloudflared${RESET}\n"
-    
+
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
     read -r
 }
@@ -2629,7 +3161,7 @@ scan_and_remove_matrix_resources() {
     local RESOURCE_LIST=()
 
     # ── Containers ───────────────────────────────────────────────────────────
-    local MATRIX_IMAGES_PATTERN='matrixdotorg/synapse|element-hq/matrix-authentication-service|element-hq/element-call|matrix-org/sliding-sync|awesometechnologies/synapse-admin|vectorim/element-web|livekit/livekit-server|coturn/coturn|turt2live/matrix-media-repo|mautrix/'
+    local MATRIX_IMAGES_PATTERN='matrixdotorg/synapse|element-hq/matrix-authentication-service|element-hq/element-call|element-hq/lk-jwt-service|matrix-org/sliding-sync|element-hq/element-admin|awesometechnologies/synapse-admin|vectorim/element-web|livekit/livekit-server|turt2live/matrix-media-repo|mautrix/'
 
     while IFS= read -r line; do
         local NAME IMAGE STATUS
@@ -2732,7 +3264,7 @@ scan_and_remove_matrix_resources() {
 
     # ── Port conflicts (non-Docker processes) ────────────────────────────────
     local HAS_PORT_CONFLICT=false
-    for port in 3478 7880 8007 8008 8009 8010 8011 8012; do
+    for port in 3478 7880 8007 8008 8009 8010 8011 8012 8014; do
         if ss -lpn 2>/dev/null | grep -q ":${port}" && \
            ! ss -lpn 2>/dev/null | grep ":${port}" | grep -q "docker-proxy"; then
             local proc proc_name
@@ -2870,6 +3402,26 @@ run_uninstall() {
     draw_header
     echo -e "\n${ERROR}>> Uninstall - Remove Matrix Stack${RESET}"
     echo -e "${WARNING}   ⚠️  This will PERMANENTLY DELETE all Matrix data!${RESET}\n"
+
+    # Warn if the script itself lives inside the stack directory
+    local SCRIPT_REAL
+    SCRIPT_REAL=$(readlink -f "$0" 2>/dev/null || echo "$0")
+    local SCRIPT_DIR
+    SCRIPT_DIR=$(dirname "$SCRIPT_REAL")
+    if [[ "$SCRIPT_DIR" == *"matrix-stack"* ]]; then
+        echo -e "${ERROR}   ⚠️  WARNING: This script is located inside the matrix-stack folder!${RESET}"
+        echo -e "${WARNING}   Deleting the stack directory will also delete this script.${RESET}"
+        echo -e "${INFO}   Please move it first:${RESET}"
+        echo -e "   ${WARNING}mv \"$SCRIPT_REAL\" ~/matrix-stack-deploy.sh${RESET}\n"
+        echo -ne "   Have you moved the script, or do you want to continue anyway? [y/N]: "
+        read -r SCRIPT_MOVE_CONFIRM
+        if [[ ! "$SCRIPT_MOVE_CONFIRM" =~ ^[Yy]$ ]]; then
+            echo -e "\n   ${SUCCESS}✓ Uninstall cancelled — move the script first then re-run${RESET}"
+            echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
+            read -r
+            return
+        fi
+    fi
     
     UNINSTALL_DIR="/opt/stacks/matrix-stack"
     if [ -d "$UNINSTALL_DIR" ]; then
@@ -2880,7 +3432,6 @@ run_uninstall() {
         [ -d "$UNINSTALL_DIR/synapse" ] && subdirs="$subdirs synapse"
         [ -d "$UNINSTALL_DIR/bridges" ] && subdirs="$subdirs bridges"
         [ -d "$UNINSTALL_DIR/mas" ] && subdirs="$subdirs mas"
-        [ -d "$UNINSTALL_DIR/coturn" ] && subdirs="$subdirs coturn"
         [ -d "$UNINSTALL_DIR/livekit" ] && subdirs="$subdirs livekit"
         if [ -n "$subdirs" ]; then
             echo -e "   ${WARNING}Contains:${RESET}$subdirs"
@@ -2947,27 +3498,335 @@ run_uninstall() {
 run_add_bridges() {
     draw_header
     echo -e "\n${ACCENT}>> Add Bridges to Existing Installation${RESET}\n"
-    
-    BRIDGE_DIR="/opt/stacks/matrix-stack"
-    if [ ! -d "$BRIDGE_DIR" ]; then
-        echo -e "   ${WARNING}⚠️  Installation not found at default path${RESET}"
-        echo -ne "   Enter path to matrix-stack directory: ${WARNING}"
+
+    # ── Smart path detection ───────────────────────────────────────────────
+    local FOUND_DIR=""
+    local SEARCH_PATHS=(
+        "/opt/stacks/matrix-stack"
+        "/opt/matrix-stack"
+        "$HOME/matrix-stack"
+        "$(pwd)/matrix-stack"
+        "$(pwd)"
+    )
+
+    echo -e "${INFO}Searching for Matrix installation...${RESET}"
+    for path in "${SEARCH_PATHS[@]}"; do
+        for cf in "compose.yaml" "docker-compose.yml" "docker-compose.yaml"; do
+            if [ -f "$path/$cf" ] && [ -d "$path/synapse" ]; then
+                FOUND_DIR="$path"
+                break 2
+            fi
+        done
+    done
+
+    # Fallback: inspect running synapse container for its data volume path
+    if [ -z "$FOUND_DIR" ]; then
+        local CONTAINER_PATH
+        CONTAINER_PATH=$(docker inspect synapse 2>/dev/null \
+            | python3 -c "import sys,json; mounts=json.load(sys.stdin)[0].get('Mounts',[]); \
+              [print(m['Source'].rstrip('/synapse')) for m in mounts if 'synapse' in m.get('Source','')]" \
+            2>/dev/null | head -1)
+        if [ -n "$CONTAINER_PATH" ] && [ -d "$CONTAINER_PATH" ]; then
+            FOUND_DIR="$CONTAINER_PATH"
+        fi
+    fi
+
+    local BRIDGE_DIR
+    if [ -n "$FOUND_DIR" ]; then
+        echo -e "${SUCCESS}✓ Found installation at: ${INFO}$FOUND_DIR${RESET}"
+        echo -ne "   Use this path? [Y/n]: "
+        read -r USE_FOUND
+        USE_FOUND=${USE_FOUND:-y}
+        if [[ "$USE_FOUND" =~ ^[Yy]$ ]]; then
+            BRIDGE_DIR="$FOUND_DIR"
+        else
+            FOUND_DIR=""
+        fi
+    fi
+
+    if [ -z "$FOUND_DIR" ]; then
+        echo -e "   ${WARNING}⚠️  No installation auto-detected${RESET}"
+        echo -e "   ${INFO}Enter the full path to your Matrix stack directory${RESET}"
+        echo -e "   ${INFO}(the folder containing compose.yaml / docker-compose.yml and the synapse/ subdirectory)${RESET}"
+        echo -ne "   Path: ${WARNING}"
         read -r BRIDGE_DIR
         echo -e "${RESET}"
-        
+
         if [ ! -d "$BRIDGE_DIR" ]; then
             echo -e "\n   ${ERROR}✗ Directory not found: $BRIDGE_DIR${RESET}"
             echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
             read -r
             return
         fi
+        if [ ! -f "$BRIDGE_DIR/compose.yaml" ] && [ ! -f "$BRIDGE_DIR/docker-compose.yml" ] && [ ! -f "$BRIDGE_DIR/docker-compose.yaml" ]; then
+            echo -e "   ${WARNING}⚠️  No compose file found — bridges may not integrate correctly${RESET}"
+        fi
     fi
-    
-    echo -e "${SUCCESS}✓ Found installation at: ${INFO}$BRIDGE_DIR${RESET}\n"
-    echo -e "${INFO}This feature is coming soon!${RESET}"
-    echo -e "${INFO}For now, reinstall with bridges selected during initial setup.${RESET}"
-    
-    echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
+
+    # ── Read domain ────────────────────────────────────────────────────────
+    local EXISTING_DOMAIN
+    EXISTING_DOMAIN=$(grep -m1 'server_name:' "$BRIDGE_DIR/synapse/homeserver.yaml" 2>/dev/null \
+        | awk '{print $2}' | tr -d '"')
+    if [ -z "$EXISTING_DOMAIN" ]; then
+        EXISTING_DOMAIN=$(grep -m1 'homeserver:' "$BRIDGE_DIR/mas/config.yaml" 2>/dev/null \
+            | awk '{print $2}' | tr -d '"')
+    fi
+    if [ -z "$EXISTING_DOMAIN" ]; then
+        echo -e "   ${WARNING}⚠️  Could not auto-detect domain from configs${RESET}"
+        echo -ne "   Enter your Matrix server domain (e.g. example.com): ${WARNING}"
+        read -r EXISTING_DOMAIN
+        echo -e "${RESET}"
+    else
+        echo -e "${INFO}   Domain detected: ${SUCCESS}$EXISTING_DOMAIN${RESET}"
+    fi
+    DOMAIN="$EXISTING_DOMAIN"
+    TARGET_DIR="$BRIDGE_DIR"
+
+    # ── Already installed bridges ──────────────────────────────────────────
+    local INSTALLED=()
+    for b in discord telegram whatsapp signal slack instagram; do
+        if [ -d "$BRIDGE_DIR/bridges/$b" ]; then
+            INSTALLED+=("$b")
+        fi
+    done
+    if [ ${#INSTALLED[@]} -gt 0 ]; then
+        echo -e "${INFO}   Already installed: ${SUCCESS}${INSTALLED[*]}${RESET}\n"
+    else
+        echo -e ""
+    fi
+
+    # ── Dependency check ───────────────────────────────────────────────────
+    if ! command -v docker &>/dev/null; then
+        echo -e "   ${ERROR}✗ Docker is not installed — required to pull bridge images${RESET}"
+        echo -e "   ${INFO}Install Docker: https://docs.docker.com/engine/install/${RESET}"
+        echo -e "\n${INFO}Press Enter to return to menu...${RESET}"
+        read -r
+        return
+    fi
+
+    # ── Bridge selection with neutral terminal colors ──────────────────────
+    if command -v whiptail &>/dev/null; then
+        DIALOG_CMD="whiptail"
+    elif command -v dialog &>/dev/null; then
+        DIALOG_CMD="dialog"
+    else
+        echo -e "   ${WARNING}⚠️  Installing whiptail...${RESET}"
+        apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+        DIALOG_CMD="whiptail"
+    fi
+
+    # Override whiptail's default blue background with terminal default (black)
+    export NEWT_COLORS='
+root=white,black
+window=white,black
+shadow=black,black
+border=white,black
+title=white,black
+roottext=white,black
+label=white,black
+checkbox=green,black
+compactbutton=white,black
+button=black,white
+actbutton=white,black
+entry=white,black
+disentry=white,black
+listbox=white,black
+actlistbox=white,black
+actsellistbox=black,white
+sellistbox=white,black
+emptyscale=white,black
+fullscale=green,black
+helpline=white,black
+'
+
+    SELECTED_BRIDGES=()
+    while true; do
+        BRIDGE_SELECTION=$($DIALOG_CMD --title " Add Matrix Bridges " \
+            --checklist "Select bridges to add (SPACE to toggle, ENTER to confirm):" \
+            20 78 10 \
+            "discord"   "Discord   — Connect to Discord servers"           OFF \
+            "telegram"  "Telegram  — Connect to Telegram chats"            OFF \
+            "whatsapp"  "WhatsApp  — Connect to WhatsApp (requires phone)"  OFF \
+            "signal"    "Signal    — Connect to Signal (requires phone)"    OFF \
+            "slack"     "Slack     — Connect to Slack workspaces"           OFF \
+            "instagram" "Instagram — Connect to Instagram DMs"              OFF \
+            3>&1 1>&2 2>&3)
+
+        local EXIT_CODE=$?
+        unset NEWT_COLORS
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "\n   ${INFO}Selection cancelled — returning to menu.${RESET}"
+            echo -e "\n${INFO}Press Enter to continue...${RESET}"
+            read -r
+            return
+        fi
+
+        SELECTED_BRIDGES=($(echo $BRIDGE_SELECTION | tr -d '"'))
+        if [ ${#SELECTED_BRIDGES[@]} -eq 0 ]; then
+            echo -e "\n   ${WARNING}No bridges selected — nothing to do.${RESET}"
+            echo -e "\n${INFO}Press Enter to return to menu...${RESET}"
+            read -r
+            return
+        fi
+        break
+    done
+
+    echo -e "\n${ACCENT}>> Installing bridge configs...${RESET}"
+    mkdir -p "$TARGET_DIR/bridges"
+
+    local NEW_BRIDGES=()
+    for bridge in "${SELECTED_BRIDGES[@]}"; do
+        if [ -d "$TARGET_DIR/bridges/$bridge" ]; then
+            echo -e "   ${WARNING}⚠  $bridge already installed — skipping${RESET}"
+            continue
+        fi
+        NEW_BRIDGES+=("$bridge")
+
+        echo -e "   ${INFO}Generating $bridge config...${RESET}"
+        mkdir -p "$TARGET_DIR/bridges/$bridge"
+        docker run --rm \
+            -v "$TARGET_DIR/bridges/$bridge:/data" \
+            dock.mau.dev/mautrix/$bridge:latest \
+            /usr/bin/mautrix-$bridge -g -c /data/config.yaml -r /data/registration.yaml > /dev/null 2>&1
+
+        sed -i "s|address: https://matrix.example.com|address: http://synapse:8008|g" \
+            "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+        sed -i "s|domain: example.com|domain: $DOMAIN|g" \
+            "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+
+        local BRIDGE_CAP
+        BRIDGE_CAP="$(tr '[:lower:]' '[:upper:]' <<< ${bridge:0:1})${bridge:1}"
+        echo -e "   ${SUCCESS}✓ $BRIDGE_CAP bridge configured${RESET}"
+    done
+
+    if [ ${#NEW_BRIDGES[@]} -eq 0 ]; then
+        echo -e "\n${WARNING}No new bridges to add — all selected bridges are already installed.${RESET}"
+        echo -e "\n${INFO}Press Enter to return to menu...${RESET}"
+        read -r
+        return
+    fi
+
+    # ── Update compose file ────────────────────────────────────────────────
+    echo -e "\n${ACCENT}>> Updating Docker Compose...${RESET}"
+    local COMPOSE_FILE=""
+    for cf in "$TARGET_DIR/compose.yaml" "$TARGET_DIR/docker-compose.yml" "$TARGET_DIR/docker-compose.yaml"; do
+        if [ -f "$cf" ]; then
+            COMPOSE_FILE="$cf"
+            break
+        fi
+    done
+
+    if [ -z "$COMPOSE_FILE" ]; then
+        echo -e "   ${WARNING}⚠️  No compose file found — skipping compose update${RESET}"
+        echo -e "   ${INFO}Add bridge services to your compose file manually${RESET}"
+    else
+        for bridge in "${NEW_BRIDGES[@]}"; do
+            if grep -q "container_name: matrix-bridge-$bridge" "$COMPOSE_FILE" 2>/dev/null; then
+                echo -e "   ${WARNING}⚠  $bridge already in compose — skipping${RESET}"
+                continue
+            fi
+            sed -i '/^networks:/i\
+\
+  # mautrix-'"$bridge"' Bridge\
+  mautrix-'"$bridge"':\
+    container_name: matrix-bridge-'"$bridge"'\
+    image: dock.mau.dev/mautrix/'"$bridge"':latest\
+    restart: unless-stopped\
+    volumes:\
+      - ./bridges/'"$bridge"':/data\
+    depends_on:\
+      synapse:\
+        condition: service_healthy\
+    networks: [ matrix-net ]\
+    labels:\
+      com.docker.compose.project: "matrix-stack"\
+' "$COMPOSE_FILE"
+            echo -e "   ${SUCCESS}✓ $bridge added to $(basename "$COMPOSE_FILE")${RESET}"
+        done
+
+        echo -e "\n${ACCENT}>> Restarting stack to start new bridges...${RESET}"
+        cd "$TARGET_DIR" && docker compose -f "$(basename "$COMPOSE_FILE")" up -d 2>&1 \
+            | grep -E "Creating|Starting|✓|error|Error" | sed 's/^/   /' || true
+    fi
+
+    # ── Register bridges with Synapse (appservice_config_files) ───────────
+    # Without this Synapse ignores the bridge bots entirely — DMs go nowhere.
+    echo -e "\n${ACCENT}>> Registering bridges with Synapse...${RESET}"
+    local HS_YAML="$TARGET_DIR/synapse/homeserver.yaml"
+    local REGISTERED=0
+
+    for bridge in "${NEW_BRIDGES[@]}"; do
+        local REG_FILE="/data/bridges/${bridge}/registration.yaml"
+        if grep -q "$REG_FILE" "$HS_YAML" 2>/dev/null; then
+            echo -e "   ${INFO}ℹ  $bridge already registered in homeserver.yaml${RESET}"
+        else
+            # Add app_service_config_files block if not present yet
+            if ! grep -q "^app_service_config_files:" "$HS_YAML" 2>/dev/null; then
+                printf "\napp_service_config_files:\n  - %s\n" "$REG_FILE" >> "$HS_YAML"
+            else
+                # Block exists — append this bridge's entry
+                sed -i "/^app_service_config_files:/a\\  - $REG_FILE" "$HS_YAML"
+            fi
+            echo -e "   ${SUCCESS}✓ $bridge registered in homeserver.yaml${RESET}"
+            REGISTERED=$((REGISTERED + 1))
+        fi
+    done
+
+    # ── Ensure bridges/ is mounted into the Synapse container ─────────────
+    if [ -n "$COMPOSE_FILE" ]; then
+        if ! grep -q "bridges:/data/bridges" "$COMPOSE_FILE" 2>/dev/null; then
+            # Insert the volume mount into the synapse service block
+            sed -i '/container_name: synapse/{
+                n
+                /image:/n
+                /volumes:/!{n}
+                /volumes:/{
+                    a\      - ./bridges:/data/bridges
+                }
+            }' "$COMPOSE_FILE" 2>/dev/null || true
+
+            # Simpler fallback: append after the ./synapse:/data volume line
+            if ! grep -q "bridges:/data/bridges" "$COMPOSE_FILE" 2>/dev/null; then
+                sed -i 's|      - ./synapse:/data|      - ./synapse:/data\n      - ./bridges:/data/bridges|' "$COMPOSE_FILE" 2>/dev/null || true
+            fi
+
+            if grep -q "bridges:/data/bridges" "$COMPOSE_FILE" 2>/dev/null; then
+                echo -e "   ${SUCCESS}✓ bridges/ volume mount added to Synapse in compose file${RESET}"
+            else
+                echo -e "   ${WARNING}⚠️  Could not auto-add bridges/ volume mount — add manually:${RESET}"
+                echo -e "   ${WARNING}   Under synapse volumes: add '- ./bridges:/data/bridges'${RESET}"
+            fi
+        else
+            echo -e "   ${INFO}ℹ  bridges/ already mounted in Synapse${RESET}"
+        fi
+    fi
+
+    # ── Restart Synapse to pick up new appservice registrations ───────────
+    if [ $REGISTERED -gt 0 ]; then
+        echo -e "\n${ACCENT}>> Restarting Synapse to load new bridge registrations...${RESET}"
+        cd "$TARGET_DIR" && docker compose -f "$(basename "$COMPOSE_FILE")" restart synapse 2>&1 \
+            | sed 's/^/   /' || true
+        echo -e "   ${SUCCESS}✓ Synapse restarted — bridge bots are now registered${RESET}"
+    fi
+
+    echo -e "\n${SUCCESS}✓ Bridges added successfully${RESET}"
+    echo -e "\n${ACCENT}Activation steps:${RESET}"
+    echo -e "   ${INFO}1. Open Element Web and start a DM with the bot user${RESET}"
+    echo -e "   ${INFO}2. Wait 1-2 min for the bot to appear if it does not show up immediately${RESET}"
+    echo -e ""
+    for bridge in "${NEW_BRIDGES[@]}"; do
+        case $bridge in
+            discord)   echo -e "   ${SUCCESS}•${RESET} Discord:   DM ${WARNING}@discordbot:$DOMAIN${RESET}   → send ${WARNING}login${RESET} → follow browser link" ;;
+            telegram)  echo -e "   ${SUCCESS}•${RESET} Telegram:  DM ${WARNING}@telegrambot:$DOMAIN${RESET}  → send ${WARNING}login${RESET} → enter phone + code" ;;
+            whatsapp)  echo -e "   ${SUCCESS}•${RESET} WhatsApp:  DM ${WARNING}@whatsappbot:$DOMAIN${RESET}  → send ${WARNING}login${RESET} → scan QR in WhatsApp" ;;
+            signal)    echo -e "   ${SUCCESS}•${RESET} Signal:    DM ${WARNING}@signalbot:$DOMAIN${RESET}    → send ${WARNING}link${RESET}  → scan QR in Signal" ;;
+            slack)     echo -e "   ${SUCCESS}•${RESET} Slack:     DM ${WARNING}@slackbot:$DOMAIN${RESET}     → send ${WARNING}login${RESET} → follow OAuth link" ;;
+            instagram) echo -e "   ${SUCCESS}•${RESET} Instagram: DM ${WARNING}@instagrambot:$DOMAIN${RESET} → send ${WARNING}login${RESET} → enter username + password" ;;
+        esac
+    done
+
+    echo -e "\n${INFO}Press Enter to return to menu...${RESET}"
     read -r
 }
 
@@ -2978,14 +3837,14 @@ run_add_bridges() {
 run_logs() {
     draw_header
     echo -e "\n${ACCENT}>> View Container Logs${RESET}\n"
-    
+
     LOGS_DIR="/opt/stacks/matrix-stack"
     if [ ! -d "$LOGS_DIR" ]; then
         echo -e "   ${WARNING}⚠️  Installation not found at default path${RESET}"
         echo -ne "   Enter path to matrix-stack directory: ${WARNING}"
         read -r LOGS_DIR
         echo -e "${RESET}"
-        
+
         if [ ! -d "$LOGS_DIR" ]; then
             echo -e "\n   ${ERROR}✗ Directory not found: $LOGS_DIR${RESET}"
             echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
@@ -2993,54 +3852,62 @@ run_logs() {
             return
         fi
     fi
-    
-    echo -e "${SUCCESS}✓ Found installation at: ${INFO}$LOGS_DIR${RESET}\n"
-    
-    echo -e "${ACCENT}Select container to view logs:${RESET}\n"
-    echo -e "   ${CHOICE_COLOR}1)${RESET} Synapse        — Matrix homeserver"
-    echo -e "   ${CHOICE_COLOR}2)${RESET} PostgreSQL     — Database"
-    echo -e "   ${CHOICE_COLOR}3)${RESET} MAS            — Authentication service"
-    echo -e "   ${CHOICE_COLOR}4)${RESET} LiveKit        — Video SFU"
-    echo -e "   ${CHOICE_COLOR}5)${RESET} Coturn         — TURN server"
-    echo -e "   ${CHOICE_COLOR}6)${RESET} Element Call   — Video conferencing"
-    echo -e "   ${CHOICE_COLOR}7)${RESET} Sliding Sync   — Sync proxy (if enabled)"
-    echo -e "   ${CHOICE_COLOR}8)${RESET} All containers — Show all logs"
-    echo -e ""
-    echo -ne "Selection (1-8): "
-    read -r LOG_SELECT
-    
-    case $LOG_SELECT in
-        1) CONTAINER="synapse" ;;
-        2) CONTAINER="synapse-db" ;;
-        3) CONTAINER="matrix-auth" ;;
-        4) CONTAINER="livekit" ;;
-        5) CONTAINER="coturn" ;;
-        6) CONTAINER="element-call" ;;
-        7) CONTAINER="sliding-sync" ;;
-        8) 
-            echo -e "\n${INFO}Showing logs for all containers (Ctrl-C to stop)...${RESET}\n"
-            cd "$LOGS_DIR" && docker compose logs -f
-            echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
+
+    echo -e "${SUCCESS}✓ Found installation at: ${INFO}$LOGS_DIR${RESET}"
+
+    while true; do
+        echo -e "\n${ACCENT}Select container to view logs:${RESET}\n"
+        echo -e "   ${CHOICE_COLOR}1)${RESET} Synapse        — Matrix homeserver"
+        echo -e "   ${CHOICE_COLOR}2)${RESET} PostgreSQL     — Database"
+        echo -e "   ${CHOICE_COLOR}3)${RESET} MAS            — Authentication service"
+        echo -e "   ${CHOICE_COLOR}4)${RESET} LiveKit        — Video SFU (with built-in TURN)"
+        echo -e "   ${CHOICE_COLOR}5)${RESET} LiveKit JWT    — Token service"
+        echo -e "   ${CHOICE_COLOR}6)${RESET} Element Call   — Video conferencing (if enabled)"
+        echo -e "   ${CHOICE_COLOR}7)${RESET} Sliding Sync   — Sync proxy (if enabled)"
+        echo -e "   ${CHOICE_COLOR}8)${RESET} All containers — Show all logs"
+        echo -e "   ${CHOICE_COLOR}q)${RESET} Back to menu"
+        echo -e ""
+        echo -ne "Selection (1-8 / q): "
+        read -r LOG_SELECT
+
+        case $LOG_SELECT in
+            q|Q)
+                return
+                ;;
+            1) CONTAINER="synapse" ;;
+            2) CONTAINER="synapse-db" ;;
+            3) CONTAINER="matrix-auth" ;;
+            4) CONTAINER="livekit" ;;
+            5) CONTAINER="livekit-jwt" ;;
+            6) CONTAINER="element-call" ;;
+            7) CONTAINER="sliding-sync" ;;
+            8)
+                echo -e "\n${INFO}Showing logs for all containers — press Ctrl-C to stop and return to log list${RESET}\n"
+                cd "$LOGS_DIR" && docker compose logs -f 2>/dev/null || true
+                echo -e "\n${INFO}Returned to log viewer.${RESET}"
+                continue
+                ;;
+            *)
+                echo -e "\n${ERROR}Invalid selection — try again${RESET}"
+                continue
+                ;;
+        esac
+
+        if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^${CONTAINER}$"; then
+            echo -e "\n${INFO}Showing logs for ${CONTAINER} — press Ctrl-C to stop and return to log list${RESET}\n"
+            docker logs -f "$CONTAINER" --tail 100 2>/dev/null || true
+            echo -e "\n${INFO}Returned to log viewer.${RESET}"
+        elif docker ps -a --format "{{.Names}}" 2>/dev/null | grep -q "^${CONTAINER}$"; then
+            echo -e "\n${WARNING}Container ${CONTAINER} exists but is stopped. Showing last 50 lines:${RESET}\n"
+            docker logs "$CONTAINER" --tail 50 2>/dev/null || true
+            echo -e "\n${INFO}Press Enter to return to log list...${RESET}"
             read -r
-            return
-            ;;
-        *)
-            echo -e "\n${ERROR}Invalid selection${RESET}"
-            echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
+        else
+            echo -e "\n${INFO}Container ${CONTAINER} is not installed${RESET}"
+            echo -e "${INFO}Press Enter to return to log list...${RESET}"
             read -r
-            return
-            ;;
-    esac
-    
-    if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^${CONTAINER}$"; then
-        echo -e "\n${INFO}Showing logs for ${CONTAINER} (Ctrl-C to stop)...${RESET}\n"
-        docker logs -f "$CONTAINER" --tail 100
-    else
-        echo -e "\n${ERROR}✗ Container not found or not running: $CONTAINER${RESET}"
-    fi
-    
-    echo -e "\n${INFO}Press Enter to return to menu or Ctrl-C to exit...${RESET}"
-    read -r
+        fi
+    done
 }
 
 ################################################################################
@@ -3069,14 +3936,14 @@ run_verify() {
     
     echo -e "${ACCENT}Container Status:${RESET}"
     # Check actual container names (synapse-db not postgres)
-    local containers=("synapse" "synapse-db" "matrix-auth" "livekit" "coturn" "element-call")
+    local containers=("synapse" "synapse-db" "matrix-auth" "livekit" "livekit-jwt" "element-web" "sliding-sync" "element-call" "element-admin" "synapse-admin" "matrix-media-repo")
     for container in "${containers[@]}"; do
         if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^${container}$"; then
             echo -e "   ${SUCCESS}✓${RESET} $container ${SUCCESS}(running)${RESET}"
         elif docker ps -a --format "{{.Names}}" 2>/dev/null | grep -q "^${container}$"; then
             echo -e "   ${WARNING}⚠${RESET}  $container ${WARNING}(stopped)${RESET}"
         else
-            echo -e "   ${ERROR}✗${RESET} $container ${ERROR}(not found)${RESET}"
+            echo -e "   ${INFO}–${RESET}  $container ${INFO}(not installed)${RESET}"
         fi
     done
     
@@ -3096,9 +3963,6 @@ main_deployment() {
     }
 
     draw_header
-    
-    # Check for script updates
-    check_for_updates
 
     ############################################################################
     # STEP 1: System Updates & Dependencies                                   #
@@ -3175,8 +4039,7 @@ main_deployment() {
         DOCKGE_FOUND=true
     else
         echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
-        echo -ne "Install Dockge (includes Docker & Compose)? (y/n): "
-        read -r INST_DOCKGE
+        ask_yn INST_DOCKGE "Install Dockge (includes Docker & Compose)? (y/n): "
         if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
             curl -fsSL https://get.docker.com | sh
             mkdir -p /opt/dockge /opt/stacks
@@ -3205,8 +4068,7 @@ main_deployment() {
     echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
     echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
     
-    echo -ne "Use these IPs for deployment? (y/n): "
-    read -r IP_CONFIRM
+    ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
     
     if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
         AUTO_PUBLIC_IP=$DETECTED_PUBLIC
@@ -3243,18 +4105,16 @@ main_deployment() {
         echo -e "   ${CHOICE_COLOR}1)${RESET} ${SUCCESS}Dockge Path (Recommended):${RESET} /opt/stacks/matrix-stack"
         echo -e "   ${CHOICE_COLOR}2)${RESET} Current Directory:         $CUR_DIR/matrix-stack"
         echo -e "   ${CHOICE_COLOR}3)${RESET} Custom Path"
-        echo -ne "Selection (1/2/3): "
-        read -r PATH_SELECT
+        ask_choice PATH_SELECT "Selection (1/2/3): " 1 2 3
         case $PATH_SELECT in
             1) TARGET_DIR="/opt/stacks/matrix-stack" ;;
             2) TARGET_DIR="$CUR_DIR/matrix-stack" ;;
-            *) echo -ne "Enter Full Path: ${WARNING}"; read -r TARGET_DIR; echo -e "${RESET}" ;;
+            3) echo -ne "Enter Full Path: ${WARNING}"; read -r TARGET_DIR; echo -e "${RESET}" ;;
         esac
     elif [ "$DOCKER_READY" = true ]; then
         echo -e "   ${CHOICE_COLOR}1)${RESET} ${SUCCESS}Current Directory (Recommended):${RESET} $CUR_DIR/matrix-stack"
         echo -e "   ${CHOICE_COLOR}2)${RESET} Custom Path"
-        echo -ne "Selection (1/2): "
-        read -r PATH_SELECT
+        ask_choice PATH_SELECT "Selection (1/2): " 1 2
         if [[ "$PATH_SELECT" == "1" ]]; then
             TARGET_DIR="$CUR_DIR/matrix-stack"
         else
@@ -3277,15 +4137,14 @@ main_deployment() {
             echo -e "\n${ERROR}[!] Existing Stack detected at $TARGET_DIR${RESET}"
         fi
         
-        echo -ne "Completely WIPE and overwrite everything in this directory? (y/n): "
-        read -r OVERWRITE
+        ask_yn OVERWRITE "Completely WIPE and overwrite everything in this directory? (y/n): "
         if [[ "$OVERWRITE" =~ ^[Yy]$ ]]; then
             # Comprehensive cleanup
             if [ -f "$TARGET_DIR/compose.yaml" ] || [ -f "$TARGET_DIR/docker-compose.yaml" ]; then
                 cd "$TARGET_DIR"
                 docker compose down -v --remove-orphans 2>/dev/null || true
                 # Clean up any remaining containers (including all possible bridges)
-                docker rm -f synapse synapse-db synapse-admin matrix-auth coturn livekit element-call sliding-sync matrix-media-repo \
+                docker rm -f synapse synapse-db element-admin synapse-admin matrix-auth livekit livekit-jwt element-call sliding-sync matrix-media-repo \
                     matrix-bridge-discord matrix-bridge-telegram matrix-bridge-whatsapp matrix-bridge-signal matrix-bridge-slack matrix-bridge-instagram 2>/dev/null || true
                 # Clean up network
                 docker network rm matrix-net 2>/dev/null || true
@@ -3302,56 +4161,215 @@ main_deployment() {
     mkdir -p "$TARGET_DIR/synapse" \
              "$TARGET_DIR/postgres_data" \
              "$TARGET_DIR/postgres_init" \
-             "$TARGET_DIR/coturn" \
              "$TARGET_DIR/livekit" \
-             "$TARGET_DIR/element-call" \
              "$TARGET_DIR/mas"
 
     ############################################################################
     # STEP 6: Service Configuration                                           #
     ############################################################################
-    
+
 echo -e "\n${ACCENT}>> Configuring services...${RESET}"
 
-# Domain configuration
+    ############################################################################
+    # 6a: Optional services — select BEFORE domain prompts so we know which   #
+    #     subdomains to ask for                                                #
+    ############################################################################
+
+    echo -e "\n${ACCENT}Optional Services:${RESET}"
+
+    # Sliding Sync Proxy
+    echo -e "\n${ACCENT}Sliding Sync Proxy:${RESET}"
+    echo -e "   ${INFO}Enables faster sync for modern Matrix clients (Element X, etc.)${RESET}"
+    ask_yn ENABLE_SLIDING_SYNC "Enable Sliding Sync Proxy? [y/n]: " y
+
+    if [[ "$ENABLE_SLIDING_SYNC" =~ ^[Yy]$ ]]; then
+        SLIDING_SYNC_ENABLED="true"
+        echo -e "   ${SUCCESS}✓ Sliding Sync will be added${RESET}"
+    else
+        SLIDING_SYNC_ENABLED="false"
+        echo -e "   ${WARNING}⚠️  Some modern clients may not work optimally without Sliding Sync${RESET}"
+    fi
+
+    # Matrix Media Repo
+    echo -e "\n${ACCENT}Matrix Media Repository:${RESET}"
+    echo -e "   ${INFO}Highly efficient media server with S3 storage, thumbnailing, and advanced media management${RESET}"
+    ask_yn ENABLE_MEDIA_REPO "Enable Matrix Media Repo? [y/n]: " n
+
+    if [[ "$ENABLE_MEDIA_REPO" =~ ^[Yy]$ ]]; then
+        MEDIA_REPO_ENABLED="true"
+        echo -e "   ${SUCCESS}✓ Matrix Media Repo will be added${RESET}"
+        echo -e "   ${INFO}ℹ  Configure storage backend after installation${RESET}"
+    else
+        MEDIA_REPO_ENABLED="false"
+        echo -e "   ${INFO}Using Synapse's built-in media storage${RESET}"
+    fi
+
+    # Element Call (standalone)
+    echo -e "\n${ACCENT}Element Call (Standalone):${RESET}"
+    echo -e "   ${INFO}Standalone WebRTC video conferencing UI powered by LiveKit.${RESET}"
+    echo -e "   ${INFO}Note: Element and Commet clients already include Element Call built-in.${RESET}"
+    echo -e "   ${INFO}A standalone deployment is only needed if you want a dedicated call UI.${RESET}"
+    ask_yn ENABLE_ELEMENT_CALL "Enable standalone Element Call? [y/n]: " n
+
+    if [[ "$ENABLE_ELEMENT_CALL" =~ ^[Yy]$ ]]; then
+        ELEMENT_CALL_ENABLED="true"
+        echo -e "   ${SUCCESS}✓ Standalone Element Call will be deployed${RESET}"
+    else
+        ELEMENT_CALL_ENABLED="false"
+        echo -e "   ${INFO}Video calling available via Element/Commet built-in widget${RESET}"
+    fi
+
+    # Admin Panel Selection
+echo -e "\n${ACCENT}Admin Panel:${RESET}"
+echo -e "   ${INFO}A web-based admin interface lets you manage users, rooms, and server settings.${RESET}"
+ask_yn ENABLE_ADMIN_PANEL "Enable an admin panel? [y/n]: " n
+
+ELEMENT_ADMIN_ENABLED="false"
+SYNAPSE_ADMIN_ENABLED="false"
+
+if [[ "$ENABLE_ADMIN_PANEL" =~ ^[Yy]$ ]]; then
+    while true; do
+        echo -e "\n   ${ACCENT}Choose admin panel:${RESET}"
+        echo -e "   ${SUCCESS}1)${RESET} Element Admin ${SUCCESS}(recommended)${RESET} — modern UI, actively maintained by Element"
+        echo -e "   ${INFO}2)${RESET} Synapse Admin — classic UI, widely known"
+        echo -ne "\n   Choice [1]: "
+        read -r ADMIN_PANEL_CHOICE
+        ADMIN_PANEL_CHOICE=${ADMIN_PANEL_CHOICE:-1}
+
+        case "$ADMIN_PANEL_CHOICE" in
+            1)
+                ELEMENT_ADMIN_ENABLED="true"
+                SYNAPSE_ADMIN_ENABLED="false"
+                echo -e "   ${SUCCESS}✓ Element Admin will be deployed${RESET}"
+                break
+                ;;
+            2)
+                SYNAPSE_ADMIN_ENABLED="true"
+                ELEMENT_ADMIN_ENABLED="false"
+                echo -e "   ${SUCCESS}✓ Synapse Admin will be deployed${RESET}"
+                break
+                ;;
+            *)
+                echo -e "   ${ERROR}Invalid selection '$ADMIN_PANEL_CHOICE'. Please choose 1 or 2.${RESET}"
+                ;;
+        esac
+    done
+else
+    echo -e "   ${INFO}Skipping admin panel${RESET}"
+fi
+
+    # Bridge Selection
+    echo -e "\n${ACCENT}Matrix Bridges:${RESET}"
+    echo -e "   ${INFO}Bridges connect Matrix to other chat platforms (Discord, Telegram, WhatsApp, etc.)${RESET}"
+    ask_yn ADD_BRIDGES "Would you like to add bridges? (y/n): "
+
+    SELECTED_BRIDGES=()
+
+    if [[ "$ADD_BRIDGES" =~ ^[Yy]$ ]]; then
+        if command -v whiptail &> /dev/null; then
+            DIALOG_CMD="whiptail"
+        elif command -v dialog &> /dev/null; then
+            DIALOG_CMD="dialog"
+        else
+            echo -e "   ${WARNING}⚠️  Installing whiptail for interactive menu...${RESET}"
+            apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+            DIALOG_CMD="whiptail"
+        fi
+
+        while true; do
+            export NEWT_COLORS='
+root=white,black
+window=white,black
+shadow=black,black
+border=white,black
+title=white,black
+roottext=white,black
+label=white,black
+checkbox=green,black
+compactbutton=white,black
+button=black,white
+actbutton=white,black
+entry=white,black
+disentry=white,black
+listbox=white,black
+actlistbox=white,black
+actsellistbox=black,white
+sellistbox=white,black
+emptyscale=white,black
+fullscale=green,black
+helpline=white,black
+'
+            BRIDGE_SELECTION=$($DIALOG_CMD --title " Matrix Bridge Selection " \
+                --checklist "Select bridges to install (SPACE to toggle, ENTER to confirm):" \
+                20 78 10 \
+                "discord"   "Discord   — Connect to Discord servers"           OFF \
+                "telegram"  "Telegram  — Connect to Telegram chats"            OFF \
+                "whatsapp"  "WhatsApp  — Connect to WhatsApp (requires phone)"  OFF \
+                "signal"    "Signal    — Connect to Signal (requires phone)"    OFF \
+                "slack"     "Slack     — Connect to Slack workspaces"           OFF \
+                "instagram" "Instagram — Connect to Instagram DMs"              OFF \
+                3>&1 1>&2 2>&3)
+            local BRIDGE_EXIT=$?
+            unset NEWT_COLORS
+
+            if [ $BRIDGE_EXIT -ne 0 ]; then
+                echo -e "\n   ${INFO}Bridge selection cancelled${RESET}"
+                echo -ne "   Would you like to select bridges again? [y/n]: "
+                read -r RETRY_BRIDGES
+                if [[ ! "$RETRY_BRIDGES" =~ ^[Yy]$ ]]; then
+                    break
+                fi
+            else
+                SELECTED_BRIDGES=($(echo $BRIDGE_SELECTION | tr -d '"'))
+                if [ ${#SELECTED_BRIDGES[@]} -eq 0 ]; then
+                    echo -e "\n   ${INFO}No bridges selected${RESET}"
+                else
+                    echo -e "\n   ${SUCCESS}✓ Selected bridges:${RESET}"
+                    for bridge in "${SELECTED_BRIDGES[@]}"; do
+                        echo -e "     • $bridge"
+                    done
+                fi
+                break
+            fi
+        done
+    else
+        echo -e "   ${INFO}No bridges will be installed${RESET}"
+    fi
+
+    ############################################################################
+    # 6b: Domain and subdomain configuration                                   #
+    ############################################################################
+
+    echo -e "\n${ACCENT}Domain Configuration:${RESET}"
+
+# Domain
 echo -ne "Base Domain (e.g., example.com): ${WARNING}"
 read -r DOMAIN
 echo -e "${RESET}"
 
-echo ""  # Blank line before first subdomain
+# Core subdomains
 echo -ne "Matrix Subdomain [matrix]: ${WARNING}"
 read -r SUB_MATRIX
 if [ -z "$SUB_MATRIX" ]; then
     SUB_MATRIX="matrix"
-    echo -ne "\033[1A\033[K"  # Move up one line and clear it
+    echo -ne "\033[1A\033[K"
     echo -e "${RESET}Matrix Subdomain [matrix]: ${WARNING}${SUB_MATRIX}${RESET}"
 else
     echo -ne "${RESET}"
 fi
 
-echo ""  # Blank line before second subdomain
-echo -ne "Element Call Subdomain [call]: ${WARNING}"
-read -r SUB_CALL
-if [ -z "$SUB_CALL" ]; then
-    SUB_CALL="call"
-    echo -ne "\033[1A\033[K"  # Move up one line and clear it
-    echo -e "${RESET}Element Call Subdomain [call]: ${WARNING}${SUB_CALL}${RESET}"
-else
-    echo -ne "${RESET}"
-fi
-
-echo ""  # Blank line before third subdomain
+echo ""
 echo -ne "MAS (Auth) Subdomain [auth]: ${WARNING}"
 read -r SUB_MAS
 if [ -z "$SUB_MAS" ]; then
     SUB_MAS="auth"
-    echo -ne "\033[1A\033[K"  # Move up one line and clear it
+    echo -ne "\033[1A\033[K"
     echo -e "${RESET}MAS (Auth) Subdomain [auth]: ${WARNING}${SUB_MAS}${RESET}"
 else
     echo -ne "${RESET}"
 fi
 
-echo ""  # Blank line before livekit subdomain
+echo ""
 echo -ne "LiveKit Subdomain [livekit]: ${WARNING}"
 read -r SUB_LIVEKIT
 if [ -z "$SUB_LIVEKIT" ]; then
@@ -3362,18 +4380,58 @@ else
     echo -ne "${RESET}"
 fi
 
-echo ""  # Blank line before element subdomain
+echo ""
 echo -ne "Element Web Subdomain [element]: ${WARNING}"
 read -r SUB_ELEMENT
 if [ -z "$SUB_ELEMENT" ]; then
     SUB_ELEMENT="element"
-    echo -ne "\033[1A\033[K"  # Move up one line and clear it
+    echo -ne "\033[1A\033[K"
     echo -e "${RESET}Element Web Subdomain [element]: ${WARNING}${SUB_ELEMENT}${RESET}"
 else
     echo -ne "${RESET}"
 fi
 
-# Optional services - set automatically if enabled
+# Optional subdomains — only ask if the service is enabled
+if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+    echo ""
+    echo -ne "Element Call Subdomain [call]: ${WARNING}"
+    read -r SUB_CALL
+    if [ -z "$SUB_CALL" ]; then
+        SUB_CALL="call"
+        echo -ne "\033[1A\033[K"
+        echo -e "${RESET}Element Call Subdomain [call]: ${WARNING}${SUB_CALL}${RESET}"
+    else
+        echo -ne "${RESET}"
+    fi
+fi
+
+if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+    echo ""
+    echo -ne "Element Admin Subdomain [admin]: ${WARNING}"
+    read -r SUB_ELEMENT_ADMIN
+    if [ -z "$SUB_ELEMENT_ADMIN" ]; then
+        SUB_ELEMENT_ADMIN="admin"
+        echo -ne "\033[1A\033[K"
+        echo -e "${RESET}Element Admin Subdomain [admin]: ${WARNING}${SUB_ELEMENT_ADMIN}${RESET}"
+    else
+        echo -ne "${RESET}"
+    fi
+fi
+
+if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+    echo ""
+    echo -ne "Synapse Admin Subdomain [admin]: ${WARNING}"
+    read -r SUB_SYNAPSE_ADMIN
+    if [ -z "$SUB_SYNAPSE_ADMIN" ]; then
+        SUB_SYNAPSE_ADMIN="admin"
+        echo -ne "\033[1A\033[K"
+        echo -e "${RESET}Synapse Admin Subdomain [admin]: ${WARNING}${SUB_SYNAPSE_ADMIN}${RESET}"
+    else
+        echo -ne "${RESET}"
+    fi
+fi
+
+# Fixed subdomains for optional services that don't need a prompt
 SUB_SLIDING_SYNC="sync"
 SUB_MEDIA_REPO="media"
 
@@ -3386,8 +4444,7 @@ echo -e "   This will appear in user IDs like ${USER_ID_EXAMPLE}@username:server
 echo -e "   ${CHOICE_COLOR}1)${RESET} Use base domain (${INFO}$DOMAIN${RESET})"
 echo -e "   ${CHOICE_COLOR}2)${RESET} Use full subdomain (${INFO}$SUB_MATRIX.$DOMAIN${RESET})"
 echo -e "   ${CHOICE_COLOR}3)${RESET} Use custom server name (e.g., myserver, matrix.example.com)"
-echo -ne "Selection (1/2/3): "
-read -r SERVERNAME_SELECT
+ask_choice SERVERNAME_SELECT "Selection (1/2/3): " 1 2 3
 
 case $SERVERNAME_SELECT in
     1) SERVER_NAME="$DOMAIN"
@@ -3398,56 +4455,62 @@ case $SERVERNAME_SELECT in
        read -r SERVER_NAME
        echo -e "${RESET}   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${SERVER_NAME}${RESET}" ;;
 esac
-    
+
     # Admin user configuration
     echo ""
     echo -ne "Admin Username [admin]: ${WARNING}"
     read -r ADMIN_USER
     if [ -z "$ADMIN_USER" ]; then
         ADMIN_USER="admin"
-        echo -ne "\033[1A\033[K"  # Move up one line and clear it
+        echo -ne "\033[1A\033[K"
         echo -e "${RESET}Admin Username [admin]: ${WARNING}${ADMIN_USER}${RESET}"
     else
         echo -ne "${RESET}"
     fi
-    
+
     # Admin password configuration
-    echo -e "\n${ACCENT}Admin Password Options:${RESET}"
-    echo -e "   ${CHOICE_COLOR}1)${RESET} Auto-generate strong password (Recommended)"
-    echo -e "   ${CHOICE_COLOR}2)${RESET} Enter custom password"
-    echo -ne "Selection (1/2): "
-    read -r PASS_SELECT
-    
-    if [[ "$PASS_SELECT" == "2" ]]; then
+    echo -e "\n${ACCENT}Admin Password:${RESET}"
+    while true; do
+        echo -e "   ${CHOICE_COLOR}1)${RESET} Auto-generate strong password ${SUCCESS}(Recommended)${RESET}"
+        echo -e "   ${CHOICE_COLOR}2)${RESET} Enter custom password"
+        echo -ne "   Selection (1/2): "
+        read -r PASS_CHOICE
+        case $PASS_CHOICE in
+            1|2) break ;;
+            *) echo -e "   ${ERROR}Invalid selection. Please enter 1 or 2.${RESET}" ;;
+        esac
+    done
+
+    if [[ "$PASS_CHOICE" == "2" ]]; then
         while true; do
-            echo -ne "Enter admin password: ${WARNING}"
+            echo -ne "   Enter admin password (min 8 chars): ${WARNING}"
             read -s ADMIN_PASS
             echo -e "${RESET}"
-            echo -ne "Confirm password: ${WARNING}"
+            echo -ne "   Confirm password: ${WARNING}"
             read -s ADMIN_PASS_CONFIRM
             echo -e "${RESET}"
             if [ "$ADMIN_PASS" == "$ADMIN_PASS_CONFIRM" ] && [ ${#ADMIN_PASS} -ge 8 ]; then
+                echo -e "   ${SUCCESS}✓ Password set${RESET}"
                 break
             else
-                echo -e "${ERROR}Passwords don't match or are too short (min 8 chars). Try again.${RESET}"
+                echo -e "   ${ERROR}Passwords don't match or are too short (min 8 chars). Try again.${RESET}"
             fi
         done
         PASS_IS_CUSTOM=true
     else
         ADMIN_PASS=$(head -c 18 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
         PASS_IS_CUSTOM=false
+        echo -e "   ${SUCCESS}✓ Strong password will be auto-generated${RESET}"
     fi
-    
+
     # Registration configuration (for MAS)
     echo -e "\n${ACCENT}Registration & Authentication Configuration:${RESET}"
     echo -e "   ${INFO}MAS (Matrix Authentication Service) handles user registration and authentication.${RESET}"
     echo -e "   ${WARNING}Allow new users to register without admin approval?${RESET}"
     echo -e "   • ${SUCCESS}Enable registration (y):${RESET} Users can create accounts freely"
     echo -e "   • ${ERROR}Disable registration (n):${RESET} Only admin can create users (recommended)"
-    echo -ne "Allow public registration? [n]: "
-    read -r ALLOW_REGISTRATION
-    ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-n}
-    
+    ask_yn ALLOW_REGISTRATION "Allow public registration? [y/n]: " n
+
     # Initialize email/SMTP variables
     REQUIRE_EMAIL_VERIFICATION="n"
     SMTP_HOST=""
@@ -3456,20 +4519,16 @@ esac
     SMTP_PASS=""
     SMTP_FROM=""
     ENABLE_CAPTCHA="n"
-    
+
     if [[ "$ALLOW_REGISTRATION" =~ ^[Yy]$ ]]; then
         MAS_REGISTRATION="true"
-        
-        # Email verification (optional)
+
         echo -e "\n${ACCENT}Email Verification:${RESET}"
         echo -e "   ${INFO}Require email verification for new registrations?${RESET}"
         echo -e "   • ${SUCCESS}Enable (y):${RESET} Users must verify email (more secure)"
         echo -e "   • ${ERROR}Disable (n):${RESET} Users can register immediately"
-        echo -ne "Require email verification? [n]: "
-        read -r REQUIRE_EMAIL_VERIFICATION
-        REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION:-n}
-        
-        # SMTP configuration (only if email verification enabled)
+        ask_yn REQUIRE_EMAIL_VERIFICATION "Require email verification? [y/n]: " n
+
         if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then
             echo -e "\n${ACCENT}SMTP Email Configuration:${RESET}"
             echo -e "   ${INFO}Configure SMTP to send verification emails.${RESET}"
@@ -3487,23 +4546,17 @@ esac
             read -r SMTP_FROM
             SMTP_FROM=${SMTP_FROM:-noreply@$DOMAIN}
             echo -e "   ${SUCCESS}✓ SMTP configured${RESET}"
-        fi
-        
-        # CAPTCHA configuration (only if email verification is enabled)
-        if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then
+
             echo -e "\n${ACCENT}CAPTCHA Protection:${RESET}"
             echo -e "   ${INFO}CAPTCHA helps prevent bot registrations.${RESET}"
-            echo -ne "Enable CAPTCHA? [y]: "
-            read -r ENABLE_CAPTCHA
-            ENABLE_CAPTCHA=${ENABLE_CAPTCHA:-y}
-            
+            ask_yn ENABLE_CAPTCHA "Enable CAPTCHA? [y/n]: " y
+
             if [[ "$ENABLE_CAPTCHA" =~ ^[Yy]$ ]]; then
                 echo -e "   ${SUCCESS}✓ CAPTCHA enabled${RESET}"
                 echo -e "   ${INFO}ℹ  Get reCAPTCHA keys at: https://www.google.com/recaptcha/admin${RESET}"
                 echo -e "   ${INFO}ℹ  You'll add keys to MAS config after installation${RESET}"
             fi
         else
-            # No email verification = no CAPTCHA needed
             ENABLE_CAPTCHA="n"
         fi
     else
@@ -3511,164 +4564,51 @@ esac
         ENABLE_CAPTCHA="n"
         echo -e "   ${REGISTRATION_DISABLED}✓ Registration disabled - admin will create users via MAS${RESET}"
     fi
-    
-    # TURN LAN access configuration
-    echo -e "\n${ACCENT}>> TURN Server LAN Access Configuration${RESET}"
-    echo -e "   ${INFO}The TURN server can be configured to allow or block connections from:${RESET}"
-    echo -e "   • Local network ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)"
-    echo -e "   • Localhost (127.0.0.0/8)"
-    echo -e ""
-    echo -e "   ${WARNING}⚠️  Security Note:${RESET}"
-    echo -e "   • ${SUCCESS}Allow LAN (y):${RESET} Useful for local testing or connecting from another computer on the same LAN"
-    echo -e "   • ${ERROR}Block LAN (n):${RESET} More secure for production, prevents external users from"
-    echo -e "                    accessing your local network through the TURN server"
-    echo ""
-    echo -ne "Allow connections from local networks? (default: n): "
-    read -r TURN_LAN_ACCESS
-    TURN_LAN_ACCESS=${TURN_LAN_ACCESS:-n}
-    
-    if [[ "$TURN_LAN_ACCESS" =~ ^[Yy]$ ]]; then
-        echo -e "   ${SUCCESS}✓ TURN LAN access: ENABLED${RESET} (local networks accessible)"
-    else
-        echo -e "   ${ERROR}✓ TURN LAN access: DISABLED${RESET} (secure - production recommended)"
-    fi
-    
-    # Sliding Sync Proxy
-    echo -e "\n${ACCENT}Sliding Sync Proxy:${RESET}"
-    echo -e "   ${INFO}Sliding Sync enables faster sync for modern Matrix clients (Element X, etc.)${RESET}"
-    echo -ne "Enable Sliding Sync Proxy? [y]: "
-    read -r ENABLE_SLIDING_SYNC
-    ENABLE_SLIDING_SYNC=${ENABLE_SLIDING_SYNC:-y}
-    
-    if [[ "$ENABLE_SLIDING_SYNC" =~ ^[Yy]$ ]]; then
-        SLIDING_SYNC_ENABLED="true"
-        echo -e "   ${SUCCESS}✓ Sliding Sync Proxy will be added${RESET}"
-    else
-        SLIDING_SYNC_ENABLED="false"
-        echo -e "   ${WARNING}⚠️  Some modern clients may not work optimally without Sliding Sync${RESET}"
-    fi
-    
-    # Matrix Media Repo
-    echo -e "\n${ACCENT}Matrix Media Repository:${RESET}"
-    echo -e "   ${INFO}Matrix Media Repo is a highly efficient media server for Matrix${RESET}"
-    echo -e "   ${INFO}Features: S3 storage, thumbnailing, advanced media management${RESET}"
-    echo -ne "Enable Matrix Media Repo? [n]: "
-    read -r ENABLE_MEDIA_REPO
-    ENABLE_MEDIA_REPO=${ENABLE_MEDIA_REPO:-n}
-    
-    if [[ "$ENABLE_MEDIA_REPO" =~ ^[Yy]$ ]]; then
-        MEDIA_REPO_ENABLED="true"
-        echo -e "   ${SUCCESS}✓ Matrix Media Repo will be added${RESET}"
-        echo -e "   ${INFO}ℹ  Configure storage backend after installation${RESET}"
-    else
-        MEDIA_REPO_ENABLED="false"
-        echo -e "   ${INFO}Using Synapse's built-in media storage${RESET}"
-    fi
-    
-    # Bridge Selection
-    echo -e "\n${ACCENT}Matrix Bridges:${RESET}"
-    echo -e "   ${INFO}Bridges connect Matrix to other chat platforms (Discord, Telegram, WhatsApp, etc.)${RESET}"
-    echo -e "   ${INFO}Each bridge allows you to chat with users on that platform from Matrix${RESET}"
-    echo -ne "\nWould you like to add bridges? [y/n]: "
-    read -r ADD_BRIDGES
-    
-    SELECTED_BRIDGES=()
-    
-    if [[ "$ADD_BRIDGES" =~ ^[Yy]$ ]]; then
-        # Check if dialog or whiptail is available
-        if command -v whiptail &> /dev/null; then
-            DIALOG_CMD="whiptail"
-        elif command -v dialog &> /dev/null; then
-            DIALOG_CMD="dialog"
-        else
-            echo -e "   ${WARNING}⚠️  Installing whiptail for interactive menu...${RESET}"
-            apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
-            DIALOG_CMD="whiptail"
-        fi
-        
-        # Loop until user confirms or cancels
-        while true; do
-            # Build checklist options
-            BRIDGE_SELECTION=$($DIALOG_CMD --title "Matrix Bridge Selection" \
-                --checklist "Select bridges to install (SPACE to toggle, ENTER to confirm):" \
-                20 78 10 \
-                "discord" "Discord - Connect to Discord servers" OFF \
-                "telegram" "Telegram - Connect to Telegram chats" OFF \
-                "whatsapp" "WhatsApp - Connect to WhatsApp (requires phone)" OFF \
-                "signal" "Signal - Connect to Signal (requires phone)" OFF \
-                "slack" "Slack - Connect to Slack workspaces" OFF \
-                "instagram" "Instagram - Connect to Instagram DMs" OFF \
-                3>&1 1>&2 2>&3)
-            
-            # Check if user cancelled
-            if [ $? -ne 0 ]; then
-                echo -e "\n   ${INFO}Bridge selection cancelled${RESET}"
-                echo -ne "   Would you like to select bridges again? [y/n]: "
-                read -r RETRY_BRIDGES
-                if [[ ! "$RETRY_BRIDGES" =~ ^[Yy]$ ]]; then
-                    break
-                fi
-            else
-                # Parse selected bridges
-                SELECTED_BRIDGES=($(echo $BRIDGE_SELECTION | tr -d '"'))
-                
-                if [ ${#SELECTED_BRIDGES[@]} -eq 0 ]; then
-                    echo -e "\n   ${INFO}No bridges selected${RESET}"
-                else
-                    echo -e "\n   ${SUCCESS}✓ Selected bridges:${RESET}"
-                    for bridge in "${SELECTED_BRIDGES[@]}"; do
-                        echo -e "     • $bridge"
-                    done
-                fi
-                break
-            fi
-        done
-    else
-        echo -e "   ${INFO}No bridges will be installed${RESET}"
-    fi
-    
+
+    # TURN is handled by LiveKit's built-in TURN server
+    TURN_LAN_ACCESS="n"
+
     # Do they already have a reverse proxy?
-    echo -e "\n${ACCENT}Reverse Proxy Setup:${RESET}"
-    echo -e "   ${CHOICE_COLOR}1)${RESET} Yes, I already have a reverse proxy running"
-    echo -e "   ${CHOICE_COLOR}2)${RESET} No, I need one set up ${INFO}(type selected next)${RESET}"
-    echo -ne "Selection (1/2): "
-    read -r PROXY_EXISTING_SELECT
+echo -e "\n${ACCENT}Reverse Proxy Setup:${RESET}"
+ask_yn PROXY_EXISTING_SELECT "   Do you already have a reverse proxy running? (y/n): "
+if [[ "$PROXY_EXISTING_SELECT" =~ ^[Yy]$ ]]; then
+    PROXY_ALREADY_RUNNING=true
+    echo -e "   ${INFO}You will be guided to configure your existing proxy.${RESET}"
+else
     PROXY_ALREADY_RUNNING=false
-    [[ "$PROXY_EXISTING_SELECT" == "1" ]] && PROXY_ALREADY_RUNNING=true
+    echo -e "   ${INFO}Select which proxy to install automatically:${RESET}"
+fi
 
-    # Which reverse proxy?
-    echo ""
-    echo -e "${ACCENT}Reverse Proxy Type:${RESET}"
-    echo -e "   ${CHOICE_COLOR}1)${RESET} Nginx Proxy Manager (NPM/NPMPlus)"
-    echo -e "   ${CHOICE_COLOR}2)${RESET} Caddy"
-    echo -e "   ${CHOICE_COLOR}3)${RESET} Traefik"
-    echo -e "   ${CHOICE_COLOR}4)${RESET} Cloudflare Tunnel"
-    echo -e "   ${CHOICE_COLOR}5)${RESET} Manual Setup"
-    echo -ne "Selection (1-5): "
-    read -r PROXY_SELECT
+# Which reverse proxy?
+echo ""
+echo -e "${ACCENT}Reverse Proxy Type:${RESET}"
+echo -e "   ${CHOICE_COLOR}1)${RESET} Nginx Proxy Manager (NPM/NPMPlus)"
+echo -e "   ${CHOICE_COLOR}2)${RESET} Caddy"
+echo -e "   ${CHOICE_COLOR}3)${RESET} Traefik"
+echo -e "   ${CHOICE_COLOR}4)${RESET} Cloudflare Tunnel"
+echo -e "   ${CHOICE_COLOR}5)${RESET} Manual Setup"
+ask_choice PROXY_SELECT "Selection (1-5): " 1 2 3 4 5
 
-    case $PROXY_SELECT in
-        1) PROXY_TYPE="npm" ;;
-        2) PROXY_TYPE="caddy" ;;
-        3) PROXY_TYPE="traefik" ;;
-        4) PROXY_TYPE="cloudflare" ;;
-        *) PROXY_TYPE="manual" ;;
-    esac
+case $PROXY_SELECT in
+    1) PROXY_TYPE="npm" ;;
+    2) PROXY_TYPE="caddy" ;;
+    3) PROXY_TYPE="traefik" ;;
+    4) PROXY_TYPE="cloudflare" ;;
+    *) PROXY_TYPE="manual" ;;
+esac
 
-    if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "cloudflare" ]] && [[ "$PROXY_TYPE" != "manual" ]]; then
-        echo -e "\n   ${WARNING}⚠️  This will add $PROXY_TYPE to your Docker stack and install it automatically.${RESET}"
-    fi
+if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "cloudflare" ]] && [[ "$PROXY_TYPE" != "manual" ]]; then
+    echo -e "\n   ${WARNING}⚠️  This will add $PROXY_TYPE to your Docker stack and install it automatically.${RESET}"
+fi
 
-    PROXY_IP="$AUTO_LOCAL_IP"
+PROXY_IP="$AUTO_LOCAL_IP"
     
     # Generate secrets
     DB_NAME="synapse"
     DB_USER="synapse"
     DB_PASS=$(head -c 12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
-    TURN_SECRET=$(openssl rand -hex 32)
     REG_SECRET=$(openssl rand -hex 32)
     MAS_SECRET=$(openssl rand -hex 32)
-    # MAS encryption secret MUST be hex, not base64
     MAS_ENCRYPTION_SECRET=$(openssl rand -hex 32)
     LK_API_KEY=$(openssl rand -hex 16)
     LK_API_SECRET=$(openssl rand -hex 32)
@@ -3701,16 +4641,25 @@ esac
     ############################################################################
     # STEP 7: Generate All Configuration Files                                #
     ############################################################################
-    
-    generate_coturn_config
+
+    # Create optional service directories now that we know what's enabled
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        mkdir -p "$TARGET_DIR/element-call"
+    fi
+
     generate_livekit_config
-    generate_element_call_config
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        generate_element_call_config
+    fi
+    if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
+        generate_media_repo_config
+    fi
     generate_element_web_config
-    generate_bridge_configs
     generate_mas_config
     generate_postgres_init
     generate_docker_compose
     generate_synapse_config
+    generate_bridge_configs
     generate_wellknown_files
     if [ "$PROXY_ALREADY_RUNNING" = false ]; then
         setup_nginx_wellknown
@@ -3745,10 +4694,12 @@ esac
     # STEP 8.5: Comprehensive Health Checks                                   #
     ############################################################################
     
-    echo -e "\n${ACCENT}>> Performing comprehensive health checks...${RESET}"
+    echo -e "\n${ACCENT}>> Performing health checks for installed services...${RESET}"
 
-    # PostgreSQL health check — waits until synapse AND matrix_auth databases exist
-    echo -ne "\n${WARNING}>> Checking PostgreSQL (2s polling)...${RESET}"
+    local HEALTH_FAILED=false
+
+    # ── PostgreSQL (always required) ─────────────────────────────────────────
+    echo -ne "\n${WARNING}>> Checking PostgreSQL...${RESET}"
     TRIES=0
     until docker exec synapse-db psql -U synapse -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw matrix_auth; do
         echo -ne "."
@@ -3761,127 +4712,201 @@ esac
             exit 1
         fi
     done
-    echo -e "\n${SUCCESS}✓ PostgreSQL is ONLINE (synapse + matrix_auth databases ready)${RESET}"
+    echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE (synapse + matrix_auth databases ready)${RESET}"
 
-    # MAS health check — must be confirmed before Synapse since Synapse depends on it
-    echo -ne "\n${WARNING}>> Checking MAS (2s polling)...${RESET}"
+    # ── MAS (always required — must be healthy before Synapse) ───────────────
+    echo -ne "\n${WARNING}>> Checking MAS (Auth Service)...${RESET}"
     TRIES=0
-    until curl -sf http://localhost:8081/health 2>/dev/null; do
+    until curl -sf http://localhost:8081/health 2>/dev/null >/dev/null; do
         echo -ne "."
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 90 ]]; then
             echo -e "\n${ERROR}[!] ERROR: MAS failed to become healthy.${RESET}"
-            echo -e "${INFO}Last 40 lines of MAS logs:${RESET}"
+            echo -e "${ERROR}   This is often caused by an invalid signing key in mas/config.yaml.${RESET}"
+            echo -e "${INFO}   Last 40 lines of MAS logs:${RESET}"
             docker logs --tail 40 matrix-auth 2>&1 | sed 's/^/   /'
             exit 1
         fi
     done
-    echo -e "\n${SUCCESS}✓ MAS is ONLINE${RESET}"
+    echo -e "\n${SUCCESS}✓ MAS (Auth Service) — ONLINE${RESET}"
 
-    # Synapse health check
-    echo -ne "\n${WARNING}>> Checking Synapse (2s polling)...${RESET}"
+    # ── Synapse (always required) ────────────────────────────────────────────
+    echo -ne "\n${WARNING}>> Checking Synapse...${RESET}"
     TRIES=0
-    until curl -sL --fail http://$AUTO_LOCAL_IP:8008/_matrix/client/versions 2>/dev/null | grep -q "versions"; do
+    until curl -sL --fail "http://$AUTO_LOCAL_IP:8008/_matrix/client/versions" 2>/dev/null | grep -q "versions"; do
         echo -ne "."
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 150 ]]; then
             echo -e "\n${ERROR}[!] ERROR: Synapse failed to start.${RESET}"
-            echo -e "${INFO}Last 40 lines of Synapse logs:${RESET}"
+            echo -e "${INFO}   Last 40 lines of Synapse logs:${RESET}"
             docker logs --tail 40 synapse 2>&1 | sed 's/^/   /'
             exit 1
         fi
     done
-    echo -e "\n${SUCCESS}✓ Synapse is ONLINE${RESET}"
+    echo -e "\n${SUCCESS}✓ Synapse — ONLINE${RESET}"
 
-    # LiveKit health check
-    echo -ne "\n${WARNING}>> Checking LiveKit (2s polling)...${RESET}"
+    # ── LiveKit SFU (always required) ────────────────────────────────────────
+    echo -ne "\n${WARNING}>> Checking LiveKit SFU...${RESET}"
     TRIES=0
-    until curl -s -f http://$AUTO_LOCAL_IP:7880 2>/dev/null >/dev/null; do
+    until curl -s -f "http://$AUTO_LOCAL_IP:7880" 2>/dev/null >/dev/null; do
         echo -ne "."
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 30 ]]; then
-            echo -e "\n${WARNING}⚠️  WARNING: LiveKit may not be ready${RESET}"
+            echo -e "\n${WARNING}⚠️  LiveKit may not be ready — check: docker logs livekit${RESET}"
+            HEALTH_FAILED=true
             break
         fi
     done
-    if [[ $TRIES -lt 30 ]]; then
-        echo -e "\n${SUCCESS}✓ LiveKit is ONLINE${RESET}"
-    fi
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE (TURN/STUN ready on :3478)${RESET}"
 
-    # Element Call health check
-    echo -ne "\n${WARNING}>> Checking Element Call (2s polling)...${RESET}"
+    # ── LiveKit JWT Service (always required) ────────────────────────────────
+    echo -ne "\n${WARNING}>> Checking LiveKit JWT Service...${RESET}"
     TRIES=0
-    until curl -s -f http://$AUTO_LOCAL_IP:8007 2>/dev/null >/dev/null; do
+    until curl -s -f "http://$AUTO_LOCAL_IP:8087" 2>/dev/null >/dev/null || \
+          docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^livekit-jwt$"; do
+        echo -ne "."
+        sleep 2
+        ((TRIES++))
+        if [[ $TRIES -gt 20 ]]; then
+            echo -e "\n${WARNING}⚠️  LiveKit JWT may not be ready — check: docker logs livekit-jwt${RESET}"
+            HEALTH_FAILED=true
+            break
+        fi
+    done
+    [[ $TRIES -lt 20 ]] && echo -e "\n${SUCCESS}✓ LiveKit JWT Service — ONLINE${RESET}"
+
+    # ── Element Web (always required) ────────────────────────────────────────
+    echo -ne "\n${WARNING}>> Checking Element Web...${RESET}"
+    TRIES=0
+    until curl -s -f "http://$AUTO_LOCAL_IP:8012" 2>/dev/null >/dev/null; do
         echo -ne "."
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 30 ]]; then
-            echo -e "\n${WARNING}⚠️  WARNING: Element Call may not be ready${RESET}"
+            echo -e "\n${WARNING}⚠️  Element Web may not be ready — check: docker logs element-web${RESET}"
+            HEALTH_FAILED=true
             break
         fi
     done
-    if [[ $TRIES -lt 30 ]]; then
-        echo -e "\n${SUCCESS}✓ Element Call is ONLINE${RESET}"
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Element Web — ONLINE${RESET}"
+
+    # ── Element Call (optional) ──────────────────────────────────────────────
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo -ne "\n${WARNING}>> Checking Element Call...${RESET}"
+        TRIES=0
+        until curl -s -f "http://$AUTO_LOCAL_IP:8007" 2>/dev/null >/dev/null; do
+            echo -ne "."
+            sleep 2
+            ((TRIES++))
+            if [[ $TRIES -gt 30 ]]; then
+                echo -e "\n${WARNING}⚠️  Element Call may not be ready — check: docker logs element-call${RESET}"
+                HEALTH_FAILED=true
+                break
+            fi
+        done
+        [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Element Call — ONLINE${RESET}"
     fi
 
-    # Element Web health check
-    echo -ne "\n${WARNING}>> Checking Element Web (2s polling)...${RESET}"
-    TRIES=0
-    until curl -s -f http://$AUTO_LOCAL_IP:8012 2>/dev/null >/dev/null; do
-        echo -ne "."
-        sleep 2
-        ((TRIES++))
-        if [[ $TRIES -gt 30 ]]; then
-            echo -e "\n${WARNING}⚠️  WARNING: Element Web may not be ready${RESET}"
-            break
-        fi
-    done
-    if [[ $TRIES -lt 30 ]]; then
-        echo -e "\n${SUCCESS}✓ Element Web is ONLINE${RESET}"
-    fi
-
-    # Sliding Sync health check (if enabled)
+    # ── Sliding Sync (optional) ──────────────────────────────────────────────
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
-        echo -ne "\n${WARNING}>> Checking Sliding Sync (2s polling)...${RESET}"
+        echo -ne "\n${WARNING}>> Checking Sliding Sync...${RESET}"
         TRIES=0
         until (echo >/dev/tcp/localhost/8011) 2>/dev/null; do
             echo -ne "."
             sleep 2
             ((TRIES++))
             if [[ $TRIES -gt 30 ]]; then
-                echo -e "\n${WARNING}⚠️  WARNING: Sliding Sync may not be ready${RESET}"
+                echo -e "\n${WARNING}⚠️  Sliding Sync may not be ready — check: docker logs sliding-sync${RESET}"
+                HEALTH_FAILED=true
                 break
             fi
         done
-        if [[ $TRIES -lt 30 ]]; then
-            echo -e "\n${SUCCESS}✓ Sliding Sync is ONLINE${RESET}"
-        fi
+        [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Sliding Sync — ONLINE${RESET}"
     fi
 
-    # Matrix Media Repo health check (if enabled)
+    # ── Matrix Media Repo (optional) ─────────────────────────────────────────
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
-        echo -ne "\n${WARNING}>> Checking Matrix Media Repo (2s polling)...${RESET}"
+        echo -ne "\n${WARNING}>> Checking Matrix Media Repo...${RESET}"
         TRIES=0
-        until curl -s -f http://$AUTO_LOCAL_IP:8013 2>/dev/null >/dev/null; do
+        until curl -s -f "http://$AUTO_LOCAL_IP:8013" 2>/dev/null >/dev/null; do
             echo -ne "."
             sleep 2
             ((TRIES++))
             if [[ $TRIES -gt 30 ]]; then
-                echo -e "\n${WARNING}⚠️  WARNING: Matrix Media Repo may not be ready${RESET}"
+                echo -e "\n${WARNING}⚠️  Matrix Media Repo may not be ready — check: docker logs matrix-media-repo${RESET}"
+                HEALTH_FAILED=true
                 break
             fi
         done
-        if [[ $TRIES -lt 30 ]]; then
-            echo -e "\n${SUCCESS}✓ Matrix Media Repo is ONLINE${RESET}"
-        fi
+        [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Matrix Media Repo — ONLINE${RESET}"
     fi
-    
-    echo -e "\n${SUCCESS}═══════════════════════════════════════════════════════════${RESET}"
-    echo -e "${SUCCESS}             ALL CRITICAL SERVICES ARE ONLINE               ${RESET}"
-    echo -e "${SUCCESS}═══════════════════════════════════════════════════════════${RESET}"
+
+    # ── Admin panel (optional) ────────────────────────────────────────────────
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo -ne "\n${WARNING}>> Checking Element Admin...${RESET}"
+        TRIES=0
+        until curl -s -f "http://$AUTO_LOCAL_IP:8014" 2>/dev/null >/dev/null; do
+            echo -ne "."
+            sleep 2
+            ((TRIES++))
+            if [[ $TRIES -gt 20 ]]; then
+                echo -e "\n${WARNING}⚠️  Element Admin may not be ready — check: docker logs element-admin${RESET}"
+                HEALTH_FAILED=true
+                break
+            fi
+        done
+        [[ $TRIES -lt 20 ]] && echo -e "\n${SUCCESS}✓ Element Admin — ONLINE${RESET}"
+    fi
+
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo -ne "\n${WARNING}>> Checking Synapse Admin...${RESET}"
+        TRIES=0
+        until curl -s -f "http://$AUTO_LOCAL_IP:8009" 2>/dev/null >/dev/null; do
+            echo -ne "."
+            sleep 2
+            ((TRIES++))
+            if [[ $TRIES -gt 20 ]]; then
+                echo -e "\n${WARNING}⚠️  Synapse Admin may not be ready — check: docker logs synapse-admin${RESET}"
+                HEALTH_FAILED=true
+                break
+            fi
+        done
+        [[ $TRIES -lt 20 ]] && echo -e "\n${SUCCESS}✓ Synapse Admin — ONLINE${RESET}"
+    fi
+
+    # ── Bridges (optional) ────────────────────────────────────────────────────
+    if [[ ${#SELECTED_BRIDGES[@]} -gt 0 ]]; then
+        echo -e "\n${WARNING}>> Checking bridges (allow 30-60s to connect)...${RESET}"
+        for bridge in "${SELECTED_BRIDGES[@]}"; do
+            TRIES=0
+            echo -ne "   ${INFO}$bridge${RESET}..."
+            until docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^matrix-bridge-${bridge}$"; do
+                echo -ne "."
+                sleep 2
+                ((TRIES++))
+                if [[ $TRIES -gt 20 ]]; then
+                    echo -e " ${WARNING}⚠️  not running — check: docker logs matrix-bridge-$bridge${RESET}"
+                    HEALTH_FAILED=true
+                    break
+                fi
+            done
+            [[ $TRIES -lt 20 ]] && echo -e " ${SUCCESS}running${RESET}"
+        done
+    fi
+
+    echo ""
+    if [[ "$HEALTH_FAILED" == "true" ]]; then
+        echo -e "${WARNING}╔══════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${WARNING}║   SOME SERVICES DID NOT COME ONLINE — review warnings above  ║${RESET}"
+        echo -e "${WARNING}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    else
+        echo -e "${SUCCESS}╔══════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${SUCCESS}║              ALL INSTALLED SERVICES ARE ONLINE               ║${RESET}"
+        echo -e "${SUCCESS}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    fi
 
     # Post-startup proxy configuration
     if [[ "$PROXY_ALREADY_RUNNING" == "false" ]]; then
@@ -4049,9 +5074,7 @@ esac
     echo -e "   ${WARNING}⚠️  Recommendation: Enable log rotation to prevent disk space issues${RESET}"
     echo -e "   • ${SUCCESS}Enable log rotation (y):${RESET} Configure automatic log rotation for all containers"
     echo -e "   • ${ERROR}Disable log rotation (n):${RESET} Leave logs as-is (may fill up disk over time)"
-    echo -ne "Setup log rotation to prevent disk space issues? (default: y): "
-    read -r SETUP_LOG_ROTATION
-    SETUP_LOG_ROTATION=${SETUP_LOG_ROTATION:-y}
+    ask_yn SETUP_LOG_ROTATION "Setup log rotation to prevent disk space issues? [y/n]: " y
     
     if [[ "$SETUP_LOG_ROTATION" =~ ^[Yy]$ ]]; then
         setup_log_rotation
@@ -4071,7 +5094,7 @@ esac
 # SCRIPT ENTRY POINT                                                           #
 ################################################################################
 
-# Check for updates
+# Run update check before showing anything else
 check_for_updates
 
 # Pre-install menu
@@ -4088,8 +5111,7 @@ while true; do
     echo -e ""
     echo -e "   ${INFO}0)${RESET} ${ERROR}Exit${RESET}"
     echo -e ""
-    echo -ne "Selection (0-6): "
-    read -r MENU_SELECT
+    ask_choice MENU_SELECT "Selection (0-6): " 0 1 2 3 4 5 6
 
     case $MENU_SELECT in
         0)
@@ -4135,12 +5157,6 @@ while true; do
             ;;
         6)
             run_logs
-            draw_header
-            ;;
-        *)
-            # Invalid selection - loop back to menu
-            echo -e "\n${ERROR}Invalid selection. Please choose 0-6.${RESET}"
-            sleep 2
             draw_header
             ;;
     esac

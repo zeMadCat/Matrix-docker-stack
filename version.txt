@@ -1,1 +1,77 @@
-1.1
+Matrix Docker Stack — Version History
+======================================
+
+Current Version: v1.2
+Released: 2026-03-01
+Script: matrix-stack-deploy.sh
+
+────────────────────────────────────────
+v1.2  (2026-03-01)
+────────────────────────────────────────
+  BUGFIXES
+  • MAS signing key: switched to openssl genpkey with file-based
+    approach to reliably produce a valid PKCS#8/prime256v1 key;
+    the previous ecparam pipeline could silently produce an empty
+    key causing "signing key is invalid" on every login attempt
+  • Bridge registration: bridge registration.yaml files are now
+    written to app_service_config_files in homeserver.yaml;
+    bridges/ directory is mounted into the Synapse container as
+    /data/bridges — without both, DMs to bridge bots did nothing
+  • Admin password: fixed variable mismatch (PASS_SELECT vs
+    PASS_CHOICE) that caused custom password to never be used
+
+  NEW
+  • Admin panel selection: choose Element Admin (recommended) or
+    Synapse Admin — fully dynamic, only chosen panel deployed
+  • LiveKit JWT Service added for token generation
+  • LiveKit built-in TURN/STUN replaces coturn
+  • Add Bridges (option 5) fully implemented — auto-detects
+    install path from common locations and running container
+    volume mounts; works with other Docker Matrix deployments
+  • Input validation on all y/n and numbered prompts — invalid
+    input loops back with an error instead of silently continuing
+
+  IMPROVED
+  • Update check now runs before the menu (not inside it); shows
+    update prompt and restarts if accepted; header shows script
+    version only, no GitHub check in header
+  • Health checks now conditional — only installed services are
+    polled; added checks for LiveKit JWT, admin panels, and bridge
+    containers; warnings include correct docker logs command;
+    summary box shows FAILED state if any service missed
+  • Optional services selected before domain/subdomain prompts —
+    only enabled services get subdomain questions
+  • Bridge TUI (whiptail) uses terminal background color via
+    NEWT_COLORS instead of default blue
+  • Log viewer is a loop — Ctrl-C returns to container list; q
+    exits to main menu; stopped containers show last 50 lines
+  • Verify: optional containers show 'not installed' with neutral
+    dash instead of red ✗ 'not found'
+  • Credentials file saves full deployment summary: all URLs,
+    config paths, important notes, and bridge activation steps
+  • Per-bridge activation guides in deployment footer with exact
+    steps per bridge (OAuth, QR code, phone+code, etc.)
+  • Banner alignment fixed; removed (opt) labels
+
+  REMOVED
+  • coturn container and all associated config
+  • TURN_SECRET generation (unused after coturn removal)
+  • Redundant check_for_updates call inside main_deployment
+
+────────────────────────────────────────
+v1.1  (prior)
+────────────────────────────────────────
+  • Element Admin added as optional component
+  • Bridge selection improvements
+  • Fixed MAS OIDC configuration
+  • Caddy/Traefik auto-configuration added
+  • NPM step-by-step guide enhancements
+
+────────────────────────────────────────
+v1.0  (initial release)
+────────────────────────────────────────
+  • Interactive TUI deployment wizard
+  • Synapse + MAS + LiveKit + Element Web stack
+  • Support for NPM, Caddy, Traefik, Cloudflare Tunnel
+  • Optional bridges: Discord, Telegram, WhatsApp,
+    Signal, Slack, Instagram
