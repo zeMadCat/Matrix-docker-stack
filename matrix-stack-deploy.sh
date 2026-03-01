@@ -1300,8 +1300,8 @@ generate_bridge_configs() {
 
                 # Permissions — replace example.com placeholders with actual domain/admin
                 sed -i \
-                    -e "s|"example.com": user|"$DOMAIN": user|g" \
-                    -e "s|"@admin:example.com": admin|"@$ADMIN_USER:$DOMAIN": admin|g" \
+                    -e "s|\"example.com\": user|\"$DOMAIN\": user|g" \
+                    -e "s|\"@admin:example.com\": admin|\"@$ADMIN_USER:$DOMAIN\": admin|g" \
                     "$CFG" 2>/dev/null
 
                 # bot_username / sender_localpart — generator default is mautrix<bridge>bot
@@ -1886,7 +1886,7 @@ COMPOSEEOF
     image: oci.element.io/element-admin:latest\
     restart: unless-stopped\
     ports: [ "8014:80" ]\
-    networks: [ '$MATRIX_NETWORK' ]\
+    networks: [ matrix-net ]\
     labels:\
       com.docker.compose.project: "matrix-stack"\
 ' "$TARGET_DIR/compose.yaml"
@@ -2012,6 +2012,8 @@ COMPOSEEOF
       - ./bridges/'"$bridge"':/data\
     depends_on:\
       synapse:\
+        condition: service_healthy\
+      postgres:\
         condition: service_healthy\
     networks: [ matrix-net ]\
     labels:\
@@ -4000,8 +4002,8 @@ helpline=white,black
 
         # Permissions
         sed -i \
-            -e "s|"example.com": user|"$DOMAIN": user|g" \
-            -e "s|"@admin:example.com": admin|"@$ADMIN_USER:$DOMAIN": admin|g" \
+            -e "s|\"example.com\": user|\"$DOMAIN\": user|g" \
+            -e "s|\"@admin:example.com\": admin|\"@$ADMIN_USER:$DOMAIN\": admin|g" \
             "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
 
         local BRIDGE_CAP
@@ -4046,6 +4048,8 @@ helpline=white,black
       - ./bridges/'"$bridge"':/data\
     depends_on:\
       synapse:\
+        condition: service_healthy\
+      postgres:\
         condition: service_healthy\
     networks: [ matrix-net ]\
     labels:\
@@ -5027,6 +5031,17 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE${RESET}"
+
+    # ── Create bridge databases now that postgres is confirmed healthy ────
+    for bridge in "${SELECTED_BRIDGES[@]}"; do
+        local _BNAME="mautrix_${bridge}"
+        docker exec synapse-db psql -U "$DB_USER" -tc \
+            "SELECT 1 FROM pg_database WHERE datname='$_BNAME'" 2>/dev/null \
+            | grep -q 1 || \
+            docker exec synapse-db psql -U "$DB_USER" \
+            -c "CREATE DATABASE $_BNAME OWNER $DB_USER;" 2>/dev/null \
+            && echo -e "   ${SUCCESS}✓ Created database: $_BNAME${RESET}"
+    done
 
     # ── MAS (always required — must be healthy before Synapse) ───────────────
     echo -ne "\n${WARNING}>> Checking MAS (Auth Service)...${RESET}"
