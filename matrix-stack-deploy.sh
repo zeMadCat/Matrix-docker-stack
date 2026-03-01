@@ -1885,7 +1885,9 @@ COMPOSEEOF
     container_name: element-admin\
     image: oci.element.io/element-admin:latest\
     restart: unless-stopped\
-    ports: [ "8014:80" ]\
+    ports: [ "8014:8080" ]\
+    environment:\
+      SERVER_NAME: https://REPLACE_SUB_MATRIX.REPLACE_DOMAIN\
     networks: [ matrix-net ]\
     labels:\
       com.docker.compose.project: "matrix-stack"\
@@ -5160,7 +5162,8 @@ PROXY_IP="$AUTO_LOCAL_IP"
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         echo -ne "\n${WARNING}>> Checking Matrix Media Repo...${RESET}"
         TRIES=0
-        until curl -s -f "http://$AUTO_LOCAL_IP:8013" 2>/dev/null >/dev/null; do
+        until curl -s -f "http://localhost:8013/_matrix/media/v3/config" 2>/dev/null >/dev/null || \
+              curl -s -f "http://localhost:8013/" 2>/dev/null >/dev/null; do
             echo -ne "."
             sleep 2
             ((TRIES++))
@@ -5213,7 +5216,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         echo -e "\n${WARNING}>> Checking bridges...${RESET}"
         for bridge in "${SELECTED_BRIDGES[@]}"; do
             TRIES=0
-            echo -ne "   ${INFO}$bridge${RESET}..."
+            echo -ne "   ${ACCENT}$bridge${RESET}..."
             until docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^matrix-bridge-${bridge}$"; do
                 echo -ne "."
                 sleep 2
