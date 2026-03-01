@@ -3,7 +3,7 @@
 ################################################################################
 #                                                                              #
 #                    MATRIX SYNAPSE FULL STACK DEPLOYER                        #
-#                              Version 1.1                                     #
+#                              Version 1.3                                     #
 #                           by MadCat (Production)                             #
 #                                                                              #
 #  A comprehensive deployment script for Matrix Synapse with working           #
@@ -27,7 +27,7 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.2"
+SCRIPT_VERSION="1.3"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
@@ -152,7 +152,7 @@ draw_header() {
     echo -e "${BANNER}│              MATRIX SYNAPSE FULL STACK DEPLOYER              │${RESET}"
     echo -e "${BANNER}│                          by MadCat                           │${RESET}"
     echo -e "${BANNER}│                                                              │${RESET}"
-    echo -e "${BANNER}│                  Included Components:                        │${RESET}"
+    echo -e "${BANNER}│                    Included Components:                      │${RESET}"
     echo -e "${BANNER}│   Synapse • MAS • LiveKit • LiveKit JWT • PostgreSQL • Sync  │${RESET}"
     echo -e "${BANNER}│        Element Call • Admin Panel • Bridges (optional)       │${RESET}"
     echo -e "${BANNER}│                                                              │${RESET}"
@@ -202,131 +202,164 @@ save_credentials_prompt() {
         return
     fi
 
-    # Write credentials file
+    # Write credentials file — matches the on-screen output format exactly
     mkdir -p "$(dirname "$CREDS_PATH")"
-    cat > "$CREDS_PATH" << CREDSEOF
-################################################################################
-# MATRIX STACK — DEPLOYMENT SUMMARY
-# Generated: $(date)
-# Server:    $SERVER_NAME
-# Version:   v${SCRIPT_VERSION}
-#
-# WARNING: This file contains sensitive passwords in plain text.
-#          Store securely and delete when no longer needed.
-#          Restrict permissions: chmod 600 $CREDS_PATH
-################################################################################
 
-══ MATRIX ACCESS ═══════════════════════════════════════════════════════════════
-
-  Admin User:          @$ADMIN_USER:$SERVER_NAME
-  Admin Password:      $ADMIN_PASS
-  Matrix API (LAN):    http://$AUTO_LOCAL_IP:8008
-  Matrix API (WAN):    https://$SUB_MATRIX.$DOMAIN
-  Auth Service (LAN):  http://$AUTO_LOCAL_IP:8010
-  Auth Service (WAN):  https://$SUB_MAS.$DOMAIN
-  Element Web (LAN):   http://$AUTO_LOCAL_IP:8012
-  Element Web (WAN):   https://$SUB_ELEMENT.$DOMAIN
-$(if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
-echo "  Element Call (LAN):  http://$AUTO_LOCAL_IP:8007"
-echo "  Element Call (WAN):  https://$SUB_CALL.$DOMAIN"
-fi)
-$(if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
-echo "  Element Admin (LAN): http://$AUTO_LOCAL_IP:8014"
-echo "  Element Admin (WAN): https://$SUB_ELEMENT_ADMIN.$DOMAIN"
-fi)
-$(if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
-echo "  Synapse Admin (LAN): http://$AUTO_LOCAL_IP:8009"
-echo "  Synapse Admin (WAN): https://$SUB_SYNAPSE_ADMIN.$DOMAIN"
-fi)
-$(if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
-echo "  Sliding Sync (LAN):  http://$AUTO_LOCAL_IP:8011"
-echo "  Sliding Sync (WAN):  https://$SUB_SLIDING_SYNC.$DOMAIN"
-fi)
-$(if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
-echo "  Media Repo (LAN):    http://$AUTO_LOCAL_IP:8013"
-echo "  Media Repo (WAN):    https://$SUB_MEDIA_REPO.$DOMAIN"
-fi)
-
-══ DATABASE ═════════════════════════════════════════════════════════════════════
-
-  DB User:             $DB_USER
-  DB Password:         $DB_PASS
-  Databases:           synapse, matrix_auth, syncv3$(if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then echo ", media_repo"; fi)
-
-══ INTERNAL SECRETS ═════════════════════════════════════════════════════════════
-
-  Shared Secret:       $REG_SECRET
-  MAS Secret:          $MAS_SECRET
-  LiveKit API Key:     $LK_API_KEY
-  LiveKit API Secret:  $LK_API_SECRET
-
-══ CONFIGURATION FILES ══════════════════════════════════════════════════════════
-
-  Install dir:         $TARGET_DIR
-  Synapse config:      $TARGET_DIR/synapse/homeserver.yaml
-  MAS config:          $TARGET_DIR/mas/config.yaml
-  LiveKit config:      $TARGET_DIR/livekit/livekit.yaml
-  Docker Compose:      $TARGET_DIR/compose.yaml
-
-══ IMPORTANT NOTES ══════════════════════════════════════════════════════════════
-
-  • MAS (Matrix Authentication Service) handles all authentication via OIDC
-  • app.element.io does NOT work with self-hosted MAS — use $SUB_ELEMENT.$DOMAIN
-  • iOS/Android: Use Element app (NOT Element X)
-  • TURN is built into LiveKit — turn.$DOMAIN must be DNS ONLY (never proxied)
-  • Register users: docker exec matrix-auth mas-cli manage register-user
-  • Test federation: https://federationtester.matrix.org
-
-$(if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
-echo "══ BRIDGES ══════════════════════════════════════════════════════════════════════"
-echo ""
-echo "  Installed bridges: ${SELECTED_BRIDGES[*]}"
-echo ""
-echo "  To activate a bridge:"
-echo "  1. Open Element Web and start a DM with the bot user"
-echo "  2. Wait 1-2 min for the bot to appear if needed"
-echo ""
-for bridge in "${SELECTED_BRIDGES[@]}"; do
-    case $bridge in
-        discord)   echo "  Discord:   DM @discordbot:$DOMAIN   → send: login  → follow the browser link" ;;
-        telegram)  echo "  Telegram:  DM @telegrambot:$DOMAIN  → send: login  → enter phone number + code" ;;
-        whatsapp)  echo "  WhatsApp:  DM @whatsappbot:$DOMAIN  → send: login  → scan QR code in WhatsApp app" ;;
-        signal)    echo "  Signal:    DM @signalbot:$DOMAIN    → send: link   → scan QR code in Signal app" ;;
-        slack)     echo "  Slack:     DM @slackbot:$DOMAIN     → send: login  → follow OAuth link" ;;
-        instagram) echo "  Instagram: DM @instagrambot:$DOMAIN → send: login  → enter username + password" ;;
-    esac
-done
-fi)
-CREDSEOF
-
-    # Append NPM credentials if applicable
-    if [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "npm" && -n "$NPM_ADMIN_PASS" ]]; then
-        cat >> "$CREDS_PATH" << NPMCREDSEOF
-
-══ NGINX PROXY MANAGER ══════════════════════════════════════════════════════════
-
-  NPM Web UI:          http://$AUTO_LOCAL_IP:81
-  NPM Email:           $NPM_ADMIN_EMAIL
-  NPM Password:        $NPM_ADMIN_PASS
-NPMCREDSEOF
-    elif [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "traefik" ]]; then
-        cat >> "$CREDS_PATH" << TRAEFIKCREDSEOF
-
-══ TRAEFIK ══════════════════════════════════════════════════════════════════════
-
-  Dashboard:           http://$AUTO_LOCAL_IP:8080
-  Static config:       $TARGET_DIR/traefik/traefik.yml
-  Dynamic config:      $TARGET_DIR/traefik/dynamic.yml
-TRAEFIKCREDSEOF
-    elif [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "caddy" ]]; then
-        cat >> "$CREDS_PATH" << CADDYCREDSEOF
-
-══ CADDY ════════════════════════════════════════════════════════════════════════
-
-  Admin API:           http://$AUTO_LOCAL_IP:2019
-  Config file:         $TARGET_DIR/caddy/Caddyfile
-CADDYCREDSEOF
+    {
+    echo "┌──────────────────────────────────────────────────────────────┐"
+    echo "│                      DEPLOYMENT COMPLETE                     │"
+    echo "└──────────────────────────────────────────────────────────────┘"
+    echo ""
+    echo "═══════════════════════ ACCESS CREDENTIALS ═══════════════════════"
+    echo "   Matrix Server:       $SERVER_NAME"
+    echo "   Admin User:          $ADMIN_USER"
+    if [ "$PASS_IS_CUSTOM" = true ]; then
+        echo "   Admin Pass:          [Your custom password]"
+    else
+        echo "   Admin Pass:          $ADMIN_PASS"
     fi
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo "   Element Admin:       http://$AUTO_LOCAL_IP:8014 (LAN) / https://$SUB_ELEMENT_ADMIN.$DOMAIN (WAN)"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        echo "   Synapse Admin:       http://$AUTO_LOCAL_IP:8009 (LAN) / https://$SUB_SYNAPSE_ADMIN.$DOMAIN (WAN)"
+    fi
+    echo "   Matrix API:          http://$AUTO_LOCAL_IP:8008 (LAN) / https://$SUB_MATRIX.$DOMAIN (WAN)"
+    echo "   Auth Service (MAS):  http://$AUTO_LOCAL_IP:8010 (LAN) / https://$SUB_MAS.$DOMAIN (WAN)"
+    echo "   Element Web:         http://$AUTO_LOCAL_IP:8012 (LAN) / https://$SUB_ELEMENT.$DOMAIN (WAN)"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        echo "   Element Call:        http://$AUTO_LOCAL_IP:8007 (LAN) / https://$SUB_CALL.$DOMAIN (WAN)"
+    fi
+    if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
+        echo "   Sliding Sync:        http://$AUTO_LOCAL_IP:8011 (LAN) / https://$SUB_SLIDING_SYNC.$DOMAIN (WAN)"
+    fi
+    if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
+        echo "   Media Repo:          http://$AUTO_LOCAL_IP:8013 (LAN) / https://$SUB_MEDIA_REPO.$DOMAIN (WAN)"
+    fi
+    echo ""
+    echo "═══════════════════════ USER MANAGEMENT ════════════════════════"
+    echo "   ⚠️  Registration via Element Web is disabled — MAS handles all accounts."
+    echo "   The 'Create account' button in Element will open the MAS registration page."
+    echo ""
+    echo "   Create a regular user:"
+    echo "   docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --yes"
+    echo ""
+    echo "   Create an admin user:"
+    echo "   docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --admin --yes"
+    echo ""
+    echo "   Or register via the MAS web UI:"
+    echo "   https://$SUB_MAS.$DOMAIN/account/"
+    echo ""
+    echo "═══════════════════════ INTERNAL SECRETS ════════════════════════"
+    echo "   Database Credentials:"
+    echo "      DB User:       $DB_USER"
+    echo "      DB Password:   $DB_PASS"
+    echo "      Databases:     synapse, matrix_auth, syncv3$(if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then echo ", media_repo"; fi)"
+    echo "   Shared Secret:    $REG_SECRET"
+    echo "   MAS Secret:       $MAS_SECRET"
+    echo "   Livekit API Key:  $LK_API_KEY"
+    echo "   Livekit Secret:   $LK_API_SECRET"
+    if [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "npm" && -n "$NPM_ADMIN_PASS" ]]; then
+        echo "   NPM Web UI:       http://$AUTO_LOCAL_IP:81"
+        echo "   NPM Email:        $NPM_ADMIN_EMAIL"
+        echo "   NPM Password:     $NPM_ADMIN_PASS"
+    fi
+    echo ""
+    echo "═════════════════════════ DNS RECORDS ═══════════════════════════"
+    echo "   (See on-screen output for DNS table)"
+    echo ""
+    echo "════════════════════════ PORT FORWARDING ═════════════════════════"
+    echo "   (See on-screen output for port forwarding table)"
+    echo ""
+    echo "═══════════════════════ CONFIGURATION FILES ═══════════════════════"
+    echo "   • LiveKit:        $TARGET_DIR/livekit/livekit.yaml"
+    echo "   • Synapse:        $TARGET_DIR/synapse/homeserver.yaml"
+    echo "   • MAS:            $TARGET_DIR/mas/config.yaml"
+    echo ""
+    echo "════════════════════════ IMPORTANT NOTES ═════════════════════════"
+    echo "   ✓ MAS (Matrix Authentication Service) handles user authentication"
+    echo "   ✓ UNLIMITED multi-screenshare enabled (no artificial limits)"
+    echo "   ✓ LiveKit SFU configured for high-quality video calls (with built-in TURN/STUN)"
+    echo "   ✓ LiveKit JWT Service deployed for token generation"
+    echo "   ℹ  Video calling available via Element/Commet clients (built-in widget)"
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        echo "   ✓ Element Admin: https://$SUB_ELEMENT_ADMIN.$DOMAIN"
+    fi
+    echo "   ✓ iOS/Android: Use Element app (NOT Element X)"
+    echo "   ✓ Element Web (self-hosted): https://$SUB_ELEMENT.$DOMAIN"
+    echo "   ⚠️  app.element.io does NOT work with self-hosted MAS"
+    echo "   ℹ  Test federation: https://federationtester.matrix.org"
+    echo "   ⚠️  TURN must always be DNS ONLY - never proxy TURN traffic"
+    if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
+        echo ""
+        echo "═══════════════════════ BRIDGE SETUP ════════════════════════"
+        echo "   ℹ  Bridges installed: ${SELECTED_BRIDGES[*]}"
+        echo "   ⚠️  Bridges need a few minutes to fully start before use."
+        echo ""
+        echo "   How to activate each bridge:"
+        echo "   1. Open Element Web: https://$SUB_ELEMENT.$DOMAIN"
+        echo "   2. Start a new Direct Message (DM) with the bot user below"
+        echo "   3. The bot must appear in search — if not, wait 1-2 min and retry"
+        echo "   4. Send the command shown to begin the login flow"
+        for bridge in "${SELECTED_BRIDGES[@]}"; do
+            case $bridge in
+                discord)
+                    echo ""
+                    echo "   ── Discord ──────────────────────────────────────────"
+                    echo "   Bot user:  @discordbot:$DOMAIN"
+                    echo "   Step 1:    Send: login"
+                    echo "   Step 2:    Follow the link the bot sends — log in via browser"
+                    echo "   Step 3:    Authorize the bot, paste the token back if prompted"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/discord/authentication.html"
+                    ;;
+                telegram)
+                    echo ""
+                    echo "   ── Telegram ─────────────────────────────────────────"
+                    echo "   Bot user:  @telegrambot:$DOMAIN"
+                    echo "   Step 1:    Send: login"
+                    echo "   Step 2:    Enter your phone number and confirmation code"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/telegram/authentication.html"
+                    ;;
+                whatsapp)
+                    echo ""
+                    echo "   ── WhatsApp ─────────────────────────────────────────"
+                    echo "   Bot user:  @whatsappbot:$DOMAIN"
+                    echo "   Step 1:    Send: login"
+                    echo "   Step 2:    Scan the QR code in WhatsApp app"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/whatsapp/authentication.html"
+                    ;;
+                signal)
+                    echo ""
+                    echo "   ── Signal ───────────────────────────────────────────"
+                    echo "   Bot user:  @signalbot:$DOMAIN"
+                    echo "   Step 1:    Send: link"
+                    echo "   Step 2:    Scan the QR code in Signal app"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/signal/authentication.html"
+                    ;;
+                slack)
+                    echo ""
+                    echo "   ── Slack ────────────────────────────────────────────"
+                    echo "   Bot user:  @slackbot:$DOMAIN"
+                    echo "   Step 1:    Send: login"
+                    echo "   Step 2:    Follow the OAuth link"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/slack/authentication.html"
+                    ;;
+                instagram)
+                    echo ""
+                    echo "   ── Instagram ────────────────────────────────────────"
+                    echo "   Bot user:  @instagrambot:$DOMAIN"
+                    echo "   Step 1:    Send: login"
+                    echo "   Step 2:    Enter your username and password"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/instagram/authentication.html"
+                    ;;
+            esac
+        done
+    fi
+    echo ""
+    echo "══════════════════════════════════════════════════════════════════"
+    echo "     !!! STORING THIS AS A FILE IS AT YOUR OWN RESPONSIBILITY. !!!"
+    echo "══════════════════════════════════════════════════════════════════"
+    } > "$CREDS_PATH"
 
     # Restrict permissions immediately
     chmod 600 "$CREDS_PATH"
@@ -370,10 +403,10 @@ draw_footer() {
     echo -e "   ${INFO}The 'Create account' button in Element will open the MAS registration page.${RESET}"
     echo -e ""
     echo -e "   ${ACCENT}Create a regular user:${RESET}"
-    echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user${RESET}"
+    echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --yes${RESET}"
     echo -e ""
     echo -e "   ${ACCENT}Create an admin user:${RESET}"
-    echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user --admin${RESET}"
+    echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --admin --yes${RESET}"
     echo -e ""
     echo -e "   ${ACCENT}Or register via the MAS web UI:${RESET}"
     echo -e "   ${SUCCESS}https://$SUB_MAS.$DOMAIN/account/${RESET}"
@@ -616,7 +649,7 @@ draw_footer() {
             echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Add reCAPTCHA keys to ${CONFIG_PATH}${TARGET_DIR}/mas/config.yaml${RESET}"
         fi
     else
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — use CLI: ${WARNING}docker exec matrix-auth mas-cli manage register-user${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — use CLI: ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --yes${RESET}"
     fi
     
     # Sliding Sync note
@@ -810,8 +843,28 @@ check_for_updates() {
     elif [[ $result -eq 0 ]]; then
         echo -e "   ${SUCCESS}✓ You're running the latest version (v${SCRIPT_VERSION})!${RESET}"
     else
-        # Current version is newer
-        echo -e "   ${SUCCESS}✓ You're running version v${SCRIPT_VERSION}${RESET}"
+        # Current version is NEWER than GitHub — unknown/unofficial build
+        echo -e ""
+        echo -e "${ERROR}╔══════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${ERROR}║              ⚠️  UNVERIFIED SCRIPT VERSION                   ║${RESET}"
+        echo -e "${ERROR}╚══════════════════════════════════════════════════════════════╝${RESET}"
+        echo -e ""
+        echo -e "   ${WARNING}This script is version ${ERROR}v${SCRIPT_VERSION}${WARNING}, but the latest official${RESET}"
+        echo -e "   ${WARNING}release on GitHub is ${SUCCESS}v${LATEST_VERSION}${WARNING}.${RESET}"
+        echo -e ""
+        echo -e "   ${WARNING}You may be running a modified or unofficial version.${RESET}"
+        echo -e "   ${WARNING}Only run scripts obtained directly from the official repo:${RESET}"
+        echo -e "   ${SUCCESS}https://github.com/$GITHUB_REPO${RESET}"
+        echo -e ""
+        echo -ne "   ${WARNING}Continue anyway? (y/n): ${RESET}"
+        read -r UNOFFICIAL_CONFIRM
+        if [[ ! "$UNOFFICIAL_CONFIRM" =~ ^[Yy]$ ]]; then
+            echo -e "\n   ${INFO}Exiting. Download the official script from:${RESET}"
+            echo -e "   ${SUCCESS}https://github.com/$GITHUB_REPO${RESET}"
+            echo ""
+            exit 1
+        fi
+        echo -e "   ${WARNING}Proceeding with unverified version...${RESET}"
     fi
     return 0
 }
@@ -1154,51 +1207,118 @@ generate_bridge_configs() {
             discord|telegram|whatsapp|signal|slack|instagram)
                 mkdir -p "$TARGET_DIR/bridges/$bridge"
 
-                # Create a minimal config.yaml if it doesn't exist
+                # The binary requires a config.yaml to exist before -g will work.
+                # The example config is bundled in the image at /opt/mautrix-<bridge>/example-config.yaml.
+                # Step 1: copy it out of the image if we don't already have a config.
+                # Step 2: run -g against it to produce registration.yaml.
+                rm -f "$TARGET_DIR/bridges/$bridge/registration.yaml"
+
+                local GEN_LOG="$TARGET_DIR/bridges/$bridge/generate.log"
+                local GEN_OK=false
+                local ENTRYPOINT="/usr/bin/mautrix-$bridge"
+                local EXAMPLE_PATH="/opt/mautrix-$bridge/example-config.yaml"
+
+                # Step 1: extract example config from image if no config exists yet
                 if [ ! -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
-                    echo -e "   ${INFO}Creating minimal config for $bridge...${RESET}"
-                    cat > "$TARGET_DIR/bridges/$bridge/config.yaml" << BRIDGECONF
-# Minimal configuration for $bridge bridge
-# Generated by matrix-stack-deploy
-
-homeserver:
-    address: http://synapse:8008
-    domain: $DOMAIN
-appservice:
-    id: $bridge
-    bot_username: ${bridge}bot
-    port: 29318
-database:
-    type: sqlite3
-    uri: file:/data/bridge.db
-logging:
-    directory: ./logs
-BRIDGECONF
+                    docker run --rm \
+                        --entrypoint /bin/sh \
+                        -v "$TARGET_DIR/bridges/$bridge:/data" \
+                        dock.mau.dev/mautrix/$bridge:latest \
+                        -c "cp $EXAMPLE_PATH /data/config.yaml" \
+                        > "$GEN_LOG" 2>&1
                 fi
 
-                # Generate the full config and registration
-                echo -e "   ${INFO}Generating $bridge registration...${RESET}"
-                if ! docker run --rm \
-                    -v "$TARGET_DIR/bridges/$bridge:/data" \
-                    dock.mau.dev/mautrix/$bridge:latest \
-                    /usr/bin/mautrix-$bridge -g -c /data/config.yaml -r /data/registration.yaml > "$TARGET_DIR/bridges/$bridge/generate.log" 2>&1; then
-                    echo -e "   ${ERROR}✗ Failed to generate $bridge bridge config. See $TARGET_DIR/bridges/$bridge/generate.log${RESET}"
+                # Step 2: patch the minimum required fields so -g doesn't refuse to run
+                if [ -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
+                    sed -i "s|domain: example.com|domain: $DOMAIN|g" \
+                        "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+                    sed -i "s|address: https://matrix.example.com|address: http://synapse:8008|g" \
+                        "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+                    sed -i "s|address: https://example.com|address: http://synapse:8008|g" \
+                        "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+                fi
+
+                # Step 3: generate registration.yaml from the patched config
+                if [ -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
+                    docker run --rm \
+                        --entrypoint "$ENTRYPOINT" \
+                        -v "$TARGET_DIR/bridges/$bridge:/data" \
+                        dock.mau.dev/mautrix/$bridge:latest \
+                        -g -c /data/config.yaml -r /data/registration.yaml \
+                        >> "$GEN_LOG" 2>&1
+                    [ -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ] && GEN_OK=true
                 else
-                    rm -f "$TARGET_DIR/bridges/$bridge/generate.log"
-                    # Verify the registration file was created
-                    if [ -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ]; then
-                        echo -e "   ${SUCCESS}✓ $bridge registration created${RESET}"
-                    else
-                        echo -e "   ${WARNING}⚠️  $bridge registration.yaml not found after generation${RESET}"
-                    fi
+                    echo "Failed to extract example config from image" >> "$GEN_LOG"
                 fi
 
-                # Update config with correct homeserver details (ensures any placeholders are replaced)
-                sed -i "s|address: https://matrix.example.com|address: http://synapse:8008|g" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
-                sed -i "s|domain: example.com|domain: $DOMAIN|g" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+                if [[ "$GEN_OK" != "true" ]]; then
+                    echo -e "   ${ERROR}✗ Failed to generate $bridge bridge config.${RESET}"
+                    echo -e "   ${INFO}Last 10 lines of generate.log:${RESET}"
+                    tail -10 "$GEN_LOG" 2>/dev/null | sed 's/^/      /'
+                    echo -e "   ${WARNING}Full log: $GEN_LOG${RESET}"
+                else
+                    rm -f "$GEN_LOG"
+                    echo -e "   ${SUCCESS}✓ $bridge config and registration generated${RESET}"
+                fi
 
-                # Set bot username in bridge config so Synapse recognises it
-                sed -i "s|username: mautrix${bridge}bot|username: ${bridge}bot|g" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+                # Patch the generated config with correct values.
+                # Use a multi-pattern approach so we hit the field regardless of what the generator wrote.
+                local CFG="$TARGET_DIR/bridges/$bridge/config.yaml"
+                # Homeserver address — generator writes https://example.com or similar
+                sed -i \
+                    -e "s|address: https://matrix.example.com|address: http://synapse:8008|g" \
+                    -e "s|address: https://example.com|address: http://synapse:8008|g" \
+                    -e "s|address: http://example.com|address: http://synapse:8008|g" \
+                    "$CFG" 2>/dev/null
+                # Domain
+                sed -i "s|domain: example.com|domain: $DOMAIN|g" "$CFG" 2>/dev/null
+                # Database URI — bridge needs its own postgres database
+                local BRIDGE_DB="mautrix_${bridge}"
+                # Create the database if it doesn't exist
+                docker exec synapse-db psql -U "$DB_USER" -tc \
+                    "SELECT 1 FROM pg_database WHERE datname='$BRIDGE_DB'" 2>/dev/null \
+                    | grep -q 1 || \
+                    docker exec synapse-db psql -U "$DB_USER" \
+                    -c "CREATE DATABASE $BRIDGE_DB OWNER $DB_USER;" 2>/dev/null
+                # Patch the URI line — handles both commented and uncommented variants
+                sed -i \
+                    -e "s|uri: postgres://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@postgres/$BRIDGE_DB?sslmode=disable|g" \
+                    -e "s|uri: postgresql://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@postgres/$BRIDGE_DB?sslmode=disable|g" \
+                    "$CFG" 2>/dev/null
+                # If still not set (field exists but empty/different placeholder), use line replacement
+                if ! grep -q "postgresql://$DB_USER" "$CFG" 2>/dev/null; then
+                    sed -i "/^        uri:/c\        uri: postgresql://$DB_USER:$DB_PASS@postgres/$BRIDGE_DB?sslmode=disable" "$CFG" 2>/dev/null
+                fi
+
+                # Appservice listen address — must use container name so Synapse can reach it
+                sed -i "s|address: http://localhost:|address: http://mautrix-$bridge:|g" "$CFG" 2>/dev/null
+                # Also fix registration.yaml url
+                local REG_URL="$TARGET_DIR/bridges/$bridge/registration.yaml"
+                if [ -f "$REG_URL" ]; then
+                    sed -i "s|url: http://localhost:|url: http://mautrix-$bridge:|g" "$REG_URL" 2>/dev/null
+                fi
+
+                # Permissions — replace example.com placeholders with actual domain/admin
+                sed -i \
+                    -e "s|"example.com": user|"$DOMAIN": user|g" \
+                    -e "s|"@admin:example.com": admin|"@$ADMIN_USER:$DOMAIN": admin|g" \
+                    "$CFG" 2>/dev/null
+
+                # bot_username / sender_localpart — generator default is mautrix<bridge>bot
+                # Replace both the config key AND update the registration to match
+                local BOT_USER="${bridge}bot"
+                local DEFAULT_BOT="mautrix${bridge}bot"
+                sed -i "s|bot_username: $DEFAULT_BOT|bot_username: $BOT_USER|g" "$CFG" 2>/dev/null
+                # Also patch any variant spellings (some bridges use 'username:' under appservice.bot)
+                sed -i "s|username: $DEFAULT_BOT|username: $BOT_USER|g" "$CFG" 2>/dev/null
+
+                # Patch the registration.yaml sender_localpart to match the bot_username we just set,
+                # so Synapse and the bridge agree on which Matrix user is the bot.
+                local REG="$TARGET_DIR/bridges/$bridge/registration.yaml"
+                if [ -f "$REG" ]; then
+                    sed -i "s|sender_localpart: $DEFAULT_BOT|sender_localpart: $BOT_USER|g" "$REG" 2>/dev/null
+                    echo -e "   ${SUCCESS}✓ $bridge registered with Synapse${RESET}"
+                fi
 
                 BRIDGE_NAME="$(tr '[:lower:]' '[:upper:]' <<< ${bridge:0:1})${bridge:1}"
                 echo -e "${SUCCESS}   ✓ $BRIDGE_NAME bridge configured${RESET}"
@@ -1214,18 +1334,35 @@ BRIDGECONF
     fi
 
     # Register all bridge appservice files with Synapse.
+    # Only register bridges whose registration.yaml was actually generated —
+    # a missing file causes Synapse to crash on startup with load_appservices error.
     echo -e "\n${ACCENT}   >> Registering bridges with Synapse (appservice_config_files)...${RESET}"
     local AS_BLOCK="app_service_config_files:"
+    local AS_COUNT=0
     for bridge in "${SELECTED_BRIDGES[@]}"; do
+        local REG_HOST="$TARGET_DIR/bridges/${bridge}/registration.yaml"
         local REG_FILE="/data/bridges/${bridge}/registration.yaml"
-        AS_BLOCK="${AS_BLOCK}
+        if [ -f "$REG_HOST" ]; then
+            AS_BLOCK="${AS_BLOCK}
   - ${REG_FILE}"
+            ((AS_COUNT++))
+        else
+            echo -e "${WARNING}   ⚠️  Skipping $bridge — registration.yaml not found, bridge will not be registered${RESET}"
+        fi
     done
+
+    if [[ $AS_COUNT -eq 0 ]]; then
+        echo -e "${WARNING}   ⚠️  No valid bridge registrations found — skipping homeserver.yaml update${RESET}"
+        return
+    fi
 
     # Append to homeserver.yaml (only if not already present)
     if ! grep -q "app_service_config_files:" "$TARGET_DIR/synapse/homeserver.yaml" 2>/dev/null; then
         printf "\n%s\n" "$AS_BLOCK" >> "$TARGET_DIR/synapse/homeserver.yaml"
-        echo -e "${SUCCESS}   ✓ Appservice registration written to homeserver.yaml${RESET}"
+        echo -e "${SUCCESS}   ✓ Bridges registered with Synapse ($AS_COUNT):${RESET}"
+        for _b in "${SELECTED_BRIDGES[@]}"; do
+            echo -e "      ${CHOICE_COLOR}• $_b${RESET}"
+        done
     else
         echo -e "${INFO}   ℹ  app_service_config_files already present in homeserver.yaml${RESET}"
     fi
@@ -1346,25 +1483,27 @@ generate_mas_config() {
     # Ensure MAS directory exists
     mkdir -p "$TARGET_DIR/mas"
 
-    # Generate EC signing key via openssl (MAS v1.8.0+ requires PKCS#8 format)
-    # Write to temp file first so we can verify before embedding
-    local KEY_TMP
-    KEY_TMP=$(mktemp)
-    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$KEY_TMP" 2>/dev/null
-    MAS_EC_KEY=$(cat "$KEY_TMP")
-    rm -f "$KEY_TMP"
+    # MAS requires at least one RSA key (for RS256, mandatory per OIDC spec)
+    # plus an EC key for ES256. Both generated into variables — never written to disk.
+    local MAS_RSA_KEY MAS_EC_KEY
+    MAS_RSA_KEY=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null)
+    MAS_EC_KEY=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null)
 
-    # Fallback: try the older ecparam pipeline if genpkey isn't available
+    # Fallback for EC key on older openssl
     if [ -z "$MAS_EC_KEY" ] || ! echo "$MAS_EC_KEY" | grep -q "BEGIN PRIVATE KEY"; then
         MAS_EC_KEY=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null \
-                     | openssl pkcs8 -topk8 -nocrypt 2>/dev/null)
+            | openssl pkcs8 -topk8 -nocrypt 2>/dev/null)
     fi
 
-    if [ -z "$MAS_EC_KEY" ] || ! echo "$MAS_EC_KEY" | grep -q "BEGIN PRIVATE KEY"; then
-        echo -e "   ${ERROR}✗ Failed to generate EC signing key — is openssl installed and working?${RESET}"
+    if [ -z "$MAS_RSA_KEY" ] || ! echo "$MAS_RSA_KEY" | grep -q "BEGIN PRIVATE KEY"; then
+        echo -e "   ${ERROR}✗ Failed to generate RSA signing key — is openssl installed?${RESET}"
         exit 1
     fi
-    echo -e "   ${SUCCESS}✓ EC signing key generated (PKCS#8 / prime256v1)${RESET}"
+    if [ -z "$MAS_EC_KEY" ] || ! echo "$MAS_EC_KEY" | grep -q "BEGIN PRIVATE KEY"; then
+        echo -e "   ${ERROR}✗ Failed to generate EC signing key — is openssl installed?${RESET}"
+        exit 1
+    fi
+    echo -e "   ${SUCCESS}✓ RSA + EC signing keys generated${RESET}"
     
     # Build email configuration
     if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]] && [[ -n "$SMTP_HOST" ]]; then
@@ -1450,10 +1589,12 @@ database:
 secrets:
   encryption: "$MAS_ENCRYPTION_SECRET"
   keys:
-    - kid: "primary"
+    - kid: "rsa"
       key: |
-$(echo "$MAS_EC_KEY" | sed 's/^/        /')
-
+        MASKEY_RSA_PLACEHOLDER
+    - kid: "ec"
+      key: |
+        MASKEY_EC_PLACEHOLDER
 upstream_oauth2:
   providers: []
 
@@ -1491,6 +1632,7 @@ account:
   email_change_allowed: true
   display_name_change_allowed: true
   password_change_allowed: true
+  password_registration_enabled: $MAS_REGISTRATION
 
 policy:
   registration:
@@ -1502,9 +1644,39 @@ branding:
   service_name: "$DOMAIN Matrix Server"
 EOF
 
+    # Inject RSA and EC signing keys into config with correct YAML indentation.
+    # Two-pass awk: first inject RSA, then EC — keys never touch disk.
+    awk '
+    FNR==NR { lines[NR]=$0; n=NR; next }
+    /        MASKEY_RSA_PLACEHOLDER/ {
+        for(i=1;i<=n;i++) print "        " lines[i]
+        print ""
+        next
+    }
+    { print }
+    ' <(echo "$MAS_RSA_KEY") "$TARGET_DIR/mas/config.yaml" > "$TARGET_DIR/mas/config.yaml.tmp" \
+    && mv "$TARGET_DIR/mas/config.yaml.tmp" "$TARGET_DIR/mas/config.yaml"
+
+    awk '
+    FNR==NR { lines[NR]=$0; n=NR; next }
+    /        MASKEY_EC_PLACEHOLDER/ {
+        for(i=1;i<=n;i++) print "        " lines[i]
+        print ""
+        next
+    }
+    { print }
+    ' <(echo "$MAS_EC_KEY") "$TARGET_DIR/mas/config.yaml" > "$TARGET_DIR/mas/config.yaml.tmp" \
+    && mv "$TARGET_DIR/mas/config.yaml.tmp" "$TARGET_DIR/mas/config.yaml"
+
     # Verify file was created
     if [ ! -f "$TARGET_DIR/mas/config.yaml" ]; then
         echo -e "   ${ERROR}✗ FAILED to create MAS config file${RESET}"
+        exit 1
+    fi
+
+    # Verify key was injected
+    if grep -qE "MASKEY_RSA_PLACEHOLDER|MASKEY_EC_PLACEHOLDER" "$TARGET_DIR/mas/config.yaml" 2>/dev/null; then
+        echo -e "   ${ERROR}✗ Failed to inject signing key into MAS config${RESET}"
         exit 1
     fi
 
@@ -1614,7 +1786,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mas:
+      matrix-auth:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8008/_matrix/client/versions || exit 1"]
@@ -1651,10 +1823,10 @@ services:
     image: ghcr.io/element-hq/lk-jwt-service:latest
     restart: unless-stopped
     environment:
-      - LIVEKIT_HOST=wss://REPLACE_SUB_LIVEKIT.REPLACE_DOMAIN
+      - LIVEKIT_URL=wss://REPLACE_SUB_LIVEKIT.REPLACE_DOMAIN
       - LIVEKIT_KEY=REPLACE_LK_API_KEY
       - LIVEKIT_SECRET=REPLACE_LK_API_SECRET
-      - LIVEKIT_JWT_PORT=8080
+      - LIVEKIT_JWT_BIND=:8080
     ports: [ "8080:8080" ]
     depends_on: [ livekit ]
     networks: [ matrix-net ]
@@ -1662,7 +1834,7 @@ services:
       com.docker.compose.project: "matrix-stack"
 
   # MAS (Matrix Authentication Service) - Handles authentication
-  mas:
+  matrix-auth:
     container_name: matrix-auth
     image: ghcr.io/element-hq/matrix-authentication-service:latest
     restart: unless-stopped
@@ -1714,7 +1886,7 @@ COMPOSEEOF
     image: oci.element.io/element-admin:latest\
     restart: unless-stopped\
     ports: [ "8014:80" ]\
-    networks: [ matrix-net ]\
+    networks: [ '$MATRIX_NETWORK' ]\
     labels:\
       com.docker.compose.project: "matrix-stack"\
 ' "$TARGET_DIR/compose.yaml"
@@ -1859,8 +2031,11 @@ COMPOSEEOF
                 BRIDGE_NAMES="$BRIDGE_NAMES ${SUCCESS}*${RESET} $BRIDGE_NAME"
             fi
         done
-        echo -e "   ${SUCCESS}✓ ${#SELECTED_BRIDGES[@]} bridge(s) added${RESET}"
-        echo -e "     ${CHOICE_COLOR}$BRIDGE_NAMES${RESET}"
+        echo -e "   ${SUCCESS}✓ ${#SELECTED_BRIDGES[@]} bridge(s) added:${RESET}"
+        for _b in "${SELECTED_BRIDGES[@]}"; do
+            _BNAME="$(tr '[:lower:]' '[:upper:]' <<< ${_b:0:1})${_b:1}"
+            echo -e "      ${CHOICE_COLOR}• $_BNAME${RESET}"
+        done
     fi
 
     # Add proxy services if needed
@@ -2026,7 +2201,7 @@ enable_metrics: false
 # Matrix Authentication Service (replaces deprecated experimental_features.msc3861)
 matrix_authentication_service:
   enabled: true
-  endpoint: http://mas:8080/
+  endpoint: http://matrix-auth:8080/
   client_id: 0000000000000000000SYNAPSE
   client_auth_method: client_secret_basic
   secret: $MAS_SECRET
@@ -2372,9 +2547,9 @@ http:
       tls:
         certResolver: letsencrypt
 
-    mas:
+    matrix-auth:
       rule: "Host(\`$SUB_MAS.$DOMAIN\`)"
-      service: mas
+      service: matrix-auth
       entryPoints: ["websecure"]
       tls:
         certResolver: letsencrypt
@@ -2416,7 +2591,7 @@ $EXTRA_ROUTERS
         servers:
           - url: "http://$AUTO_LOCAL_IP:8008"
 
-    mas:
+    matrix-auth:
       loadBalancer:
         servers:
           - url: "http://$AUTO_LOCAL_IP:8010"
@@ -2911,9 +3086,9 @@ http:
       tls:
         certResolver: letsencrypt
 
-    mas:
+    matrix-auth:
       rule: "Host(\`$SUB_MAS.$DOMAIN\`)"
-      service: mas
+      service: matrix-auth
       entryPoints: ["websecure"]
       tls:
         certResolver: letsencrypt
@@ -2936,7 +3111,7 @@ http:
         servers:
           - url: "http://$PROXY_IP:8008"
 
-    mas:
+    matrix-auth:
       loadBalancer:
         servers:
           - url: "http://$PROXY_IP:8010"
@@ -3173,8 +3348,20 @@ scan_and_remove_matrix_resources() {
             RESOURCE_LIST+=("container|$NAME|$IMAGE|$STATUS")
         fi
     done < <(
+        # 1. Containers from our own compose project
         docker ps -a --filter "label=com.docker.compose.project=matrix-stack" \
             --format '{{.Names}}|{{.Image}}|{{.Status}}' 2>/dev/null
+
+        # 2. Containers from OTHER compose projects whose project name contains
+        #    "matrix" or "element" (catches element-docker-demo, matrix-*, etc.)
+        docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null \
+            | awk -F'|' '$4 ~ /matrix|element/ && $4 != "matrix-stack" {print $1"|"$2"|"$3}' \
+            | grep -vFf <(
+                docker ps -a --filter "label=com.docker.compose.project=matrix-stack" \
+                    --format '{{.Names}}' 2>/dev/null || true
+              ) 2>/dev/null || true
+
+        # 3. Containers matching known Matrix images not caught above
         docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}' 2>/dev/null \
             | grep -E "$MATRIX_IMAGES_PATTERN" \
             | grep -vFf <(
@@ -3359,6 +3546,22 @@ scan_and_remove_matrix_resources() {
 
     if true; then
         echo -e "\n${ACCENT}>> Cleaning up Matrix resources...${RESET}"
+
+        # Bring down any foreign Matrix/Element compose projects cleanly first
+        # This ensures their networks and anonymous volumes are also removed
+        local foreign_projects
+        foreign_projects=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
+            | sort -u | grep -E "matrix|element" | grep -v "^matrix-stack$" | grep -v "^$" || true)
+        for proj in $foreign_projects; do
+            local proj_dir
+            proj_dir=$(docker ps -a --filter "label=com.docker.compose.project=$proj" \
+                --format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | head -1)
+            if [ -n "$proj_dir" ] && [ -f "$proj_dir/docker-compose.yml" -o -f "$proj_dir/compose.yaml" ]; then
+                echo -e "   ${INFO}Bringing down compose project: $proj${RESET}"
+                docker compose -f "$proj_dir/docker-compose.yml" down -v 2>/dev/null \
+                    || docker compose -f "$proj_dir/compose.yaml" down -v 2>/dev/null || true
+            fi
+        done
 
         for entry in "${RESOURCE_LIST[@]}"; do
             [[ "$entry" == container\|* ]] || continue
@@ -3582,6 +3785,51 @@ run_add_bridges() {
     DOMAIN="$EXISTING_DOMAIN"
     TARGET_DIR="$BRIDGE_DIR"
 
+    # ── Read DB credentials from existing homeserver.yaml ─────────────────
+    if [ -z "$DB_USER" ] || [ -z "$DB_PASS" ]; then
+        DB_USER=$(grep -A 10 "^database:" "$BRIDGE_DIR/synapse/homeserver.yaml" 2>/dev/null \
+            | grep "user:" | awk '{print $2}' | tr -d '"' | head -1)
+        DB_PASS=$(grep -A 10 "^database:" "$BRIDGE_DIR/synapse/homeserver.yaml" 2>/dev/null \
+            | grep "password:" | awk '{print $2}' | tr -d '"' | head -1)
+        if [ -n "$DB_USER" ] && [ -n "$DB_PASS" ]; then
+            echo -e "   ${INFO}DB credentials detected from homeserver.yaml${RESET}"
+        else
+            echo -e "   ${WARNING}⚠️  Could not auto-detect DB credentials${RESET}"
+            echo -ne "   DB username [synapse]: ${WARNING}"
+            read -r DB_USER
+            echo -e "${RESET}"
+            DB_USER=${DB_USER:-synapse}
+            echo -ne "   DB password: ${WARNING}"
+            read -rs DB_PASS
+            echo -e "${RESET}"
+        fi
+    fi
+
+    # ── Read admin user or ask ─────────────────────────────────────────────
+    if [ -z "$ADMIN_USER" ]; then
+        echo -ne "   Admin username for bridge permissions [admin]: ${WARNING}"
+        read -r ADMIN_USER
+        echo -e "${RESET}"
+        ADMIN_USER=${ADMIN_USER:-admin}
+    fi
+
+    # ── Detect postgres container name ─────────────────────────────────────
+    local PG_CONTAINER
+    PG_CONTAINER=$(docker ps --format "{{.Names}}" 2>/dev/null \
+        | grep -E "postgres|synapse-db|matrix.*db|db.*matrix" | head -1)
+    PG_CONTAINER=${PG_CONTAINER:-synapse-db}
+    echo -e "   ${INFO}Postgres container: ${SUCCESS}$PG_CONTAINER${RESET}"
+
+    # ── Detect synapse container and Docker network ────────────────────────
+    local SYNAPSE_CONTAINER MATRIX_NETWORK
+    SYNAPSE_CONTAINER=$(docker ps --format "{{.Names}}" 2>/dev/null \
+        | grep -E "^synapse$|matrix.*synapse|synapse.*matrix" | head -1)
+    SYNAPSE_CONTAINER=${SYNAPSE_CONTAINER:-synapse}
+    MATRIX_NETWORK=$(docker inspect "$SYNAPSE_CONTAINER" 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(list(d[0]['NetworkSettings']['Networks'].keys())[0])" 2>/dev/null)
+    MATRIX_NETWORK=${MATRIX_NETWORK:-matrix-net}
+    echo -e "   ${INFO}Docker network: ${SUCCESS}$MATRIX_NETWORK${RESET}"
+
     # ── Already installed bridges ──────────────────────────────────────────
     local INSTALLED=()
     for b in discord telegram whatsapp signal slack instagram; do
@@ -3685,14 +3933,75 @@ helpline=white,black
 
         echo -e "   ${INFO}Generating $bridge config...${RESET}"
         mkdir -p "$TARGET_DIR/bridges/$bridge"
-        docker run --rm \
-            -v "$TARGET_DIR/bridges/$bridge:/data" \
-            dock.mau.dev/mautrix/$bridge:latest \
-            /usr/bin/mautrix-$bridge -g -c /data/config.yaml -r /data/registration.yaml > /dev/null 2>&1
+        rm -f "$TARGET_DIR/bridges/$bridge/registration.yaml"
+        local _ENTRYPOINT="/usr/bin/mautrix-$bridge"
+        local _EXAMPLE_PATH="/opt/mautrix-$bridge/example-config.yaml"
+        local _GEN_OK=false
 
-        sed -i "s|address: https://matrix.example.com|address: http://synapse:8008|g" \
+        # Step 1: extract example config from image if no config exists yet
+        if [ ! -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
+            docker run --rm \
+                --entrypoint /bin/sh \
+                -v "$TARGET_DIR/bridges/$bridge:/data" \
+                dock.mau.dev/mautrix/$bridge:latest \
+                -c "cp $_EXAMPLE_PATH /data/config.yaml" \
+                >/dev/null 2>&1
+        fi
+
+        # Step 2: patch minimum required fields before running -g
+        if [ -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
+            sed -i "s|domain: example.com|domain: $DOMAIN|g" \
+                "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+            sed -i "s|address: https://matrix.example.com|address: http://$SYNAPSE_CONTAINER:8008|g" \
+                "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+            sed -i "s|address: https://example.com|address: http://$SYNAPSE_CONTAINER:8008|g" \
+                "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+        fi
+
+        # Step 3: generate registration.yaml from patched config
+        if [ -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
+            docker run --rm \
+                --entrypoint "$_ENTRYPOINT" \
+                -v "$TARGET_DIR/bridges/$bridge:/data" \
+                dock.mau.dev/mautrix/$bridge:latest \
+                -g -c /data/config.yaml -r /data/registration.yaml \
+                >/dev/null 2>&1
+            [ -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ] && _GEN_OK=true
+        fi
+
+        sed -i "s|address: https://matrix.example.com|address: http://$SYNAPSE_CONTAINER:8008|g" \
             "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
         sed -i "s|domain: example.com|domain: $DOMAIN|g" \
+            "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+
+        # Database URI — bridge containers share the Docker network so use container name
+        local _BRIDGE_DB="mautrix_${bridge}"
+        docker exec "$PG_CONTAINER" psql -U "$DB_USER" -tc \
+            "SELECT 1 FROM pg_database WHERE datname='$_BRIDGE_DB'" 2>/dev/null \
+            | grep -q 1 || \
+            docker exec "$PG_CONTAINER" psql -U "$DB_USER" \
+            -c "CREATE DATABASE $_BRIDGE_DB OWNER $DB_USER;" 2>/dev/null
+        sed -i \
+            -e "s|uri: postgres://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@$PG_CONTAINER/$_BRIDGE_DB?sslmode=disable|g" \
+            -e "s|uri: postgresql://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@$PG_CONTAINER/$_BRIDGE_DB?sslmode=disable|g" \
+            "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+        if ! grep -q "postgresql://$DB_USER" "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null; then
+            sed -i "/^        uri:/c\        uri: postgresql://$DB_USER:$DB_PASS@$PG_CONTAINER/$_BRIDGE_DB?sslmode=disable" \
+                "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+        fi
+
+        # Appservice address — use container name not localhost
+        sed -i "s|address: http://localhost:|address: http://mautrix-$bridge:|g" \
+            "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
+        local _REG_URL="$TARGET_DIR/bridges/$bridge/registration.yaml"
+        if [ -f "$_REG_URL" ]; then
+            sed -i "s|url: http://localhost:|url: http://mautrix-$bridge:|g" "$_REG_URL" 2>/dev/null
+        fi
+
+        # Permissions
+        sed -i \
+            -e "s|"example.com": user|"$DOMAIN": user|g" \
+            -e "s|"@admin:example.com": admin|"@$ADMIN_USER:$DOMAIN": admin|g" \
             "$TARGET_DIR/bridges/$bridge/config.yaml" 2>/dev/null
 
         local BRIDGE_CAP
@@ -4443,7 +4752,7 @@ echo -e "\n${ACCENT}Server Name Configuration:${RESET}"
 echo -e "   This will appear in user IDs like ${USER_ID_EXAMPLE}@username:servername${RESET}"
 echo -e "   ${CHOICE_COLOR}1)${RESET} Use base domain (${INFO}$DOMAIN${RESET})"
 echo -e "   ${CHOICE_COLOR}2)${RESET} Use full subdomain (${INFO}$SUB_MATRIX.$DOMAIN${RESET})"
-echo -e "   ${CHOICE_COLOR}3)${RESET} Use custom server name (e.g., myserver, matrix.example.com)"
+echo -e "   ${CHOICE_COLOR}3)${RESET} Use custom server name (e.g., matrix.example.com)"
 ask_choice SERVERNAME_SELECT "Selection (1/2/3): " 1 2 3
 
 case $SERVERNAME_SELECT in
@@ -4453,7 +4762,12 @@ case $SERVERNAME_SELECT in
        echo -e "   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${SUB_MATRIX}.${DOMAIN}${RESET}" ;;
     3) echo -ne "Enter custom server name: ${WARNING}"
        read -r SERVER_NAME
-       echo -e "${RESET}   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${SERVER_NAME}${RESET}" ;;
+       echo -e "${RESET}   ${INFO}User IDs will be: ${USER_ID_VALUE}@username:${SERVER_NAME}${RESET}"
+       if [[ "$SERVER_NAME" != *.* ]]; then
+           echo -e "   ${WARNING}⚠️  Warning: '$SERVER_NAME' is not a domain name.${RESET}"
+           echo -e "   ${WARNING}   Federation and MAS require a valid domain. Use a real domain like matrix.example.com.${RESET}"
+       fi
+       ;;
 esac
 
     # Admin user configuration
@@ -4712,7 +5026,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             exit 1
         fi
     done
-    echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE (synapse + matrix_auth databases ready)${RESET}"
+    echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE${RESET}"
 
     # ── MAS (always required — must be healthy before Synapse) ───────────────
     echo -ne "\n${WARNING}>> Checking MAS (Auth Service)...${RESET}"
@@ -4760,7 +5074,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             break
         fi
     done
-    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE (TURN/STUN ready on :3478)${RESET}"
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE${RESET}"
 
     # ── LiveKit JWT Service (always required) ────────────────────────────────
     echo -ne "\n${WARNING}>> Checking LiveKit JWT Service...${RESET}"
@@ -4848,7 +5162,9 @@ PROXY_IP="$AUTO_LOCAL_IP"
     if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
         echo -ne "\n${WARNING}>> Checking Element Admin...${RESET}"
         TRIES=0
-        until curl -s -f "http://$AUTO_LOCAL_IP:8014" 2>/dev/null >/dev/null; do
+        # Element Admin's nginx may return 3xx on /, so don't use -f (which fails on non-2xx).
+        # Instead check that the server responds with any HTTP status code at all.
+        until [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$AUTO_LOCAL_IP:8014" 2>/dev/null)" =~ ^[0-9]{3}$ ]]; do
             echo -ne "."
             sleep 2
             ((TRIES++))
@@ -4879,7 +5195,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
 
     # ── Bridges (optional) ────────────────────────────────────────────────────
     if [[ ${#SELECTED_BRIDGES[@]} -gt 0 ]]; then
-        echo -e "\n${WARNING}>> Checking bridges (allow 30-60s to connect)...${RESET}"
+        echo -e "\n${WARNING}>> Checking bridges...${RESET}"
         for bridge in "${SELECTED_BRIDGES[@]}"; do
             TRIES=0
             echo -ne "   ${INFO}$bridge${RESET}..."
@@ -4893,7 +5209,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
                     break
                 fi
             done
-            [[ $TRIES -lt 20 ]] && echo -e " ${SUCCESS}running${RESET}"
+            [[ $TRIES -lt 20 ]] && echo -e " ${SUCCESS}ONLINE${RESET}"
         done
     fi
 

@@ -1,77 +1,120 @@
-Matrix Docker Stack — Version History
-======================================
+Matrix Synapse Full Stack Deployer — Changelog
+by MadCat
+================================================================================
 
-Current Version: v1.2
-Released: 2026-03-01
-Script: matrix-stack-deploy.sh
+v1.3 (2026-03-01)
+─────────────────
+MAS (Matrix Authentication Service):
+  - Fixed signing key: MAS requires both RSA (RS256) and EC (P-256) keys.
+    Previously only an EC key was generated, causing token signing failures.
+  - Keys are now generated as bash variables and injected inline into
+    config.yaml via awk — no signing_key.pem file is written to disk.
+  - Removed key_file volume mount from compose.yaml (was never supported
+    reliably; inline key: | block is the correct approach).
+  - Renamed compose service from "mas" to "matrix-auth" for consistency
+    with the container_name.
+  - Fixed Synapse endpoint reference: http://matrix-auth:8080/ (was mas:8080).
 
-────────────────────────────────────────
-v1.2  (2026-03-01)
-────────────────────────────────────────
-  BUGFIXES
-  • MAS signing key: switched to openssl genpkey with file-based
-    approach to reliably produce a valid PKCS#8/prime256v1 key;
-    the previous ecparam pipeline could silently produce an empty
-    key causing "signing key is invalid" on every login attempt
-  • Bridge registration: bridge registration.yaml files are now
-    written to app_service_config_files in homeserver.yaml;
-    bridges/ directory is mounted into the Synapse container as
-    /data/bridges — without both, DMs to bridge bots did nothing
-  • Admin password: fixed variable mismatch (PASS_SELECT vs
-    PASS_CHOICE) that caused custom password to never be used
+Discord Bridge (mautrix-discord):
+  - Fixed: appservice.database was not configured — URI now correctly patched
+    into config.yaml with format postgresql://user:pass@postgres/db.
+  - Fixed: added ?sslmode=disable to bridge DB URI (postgres container has
+    SSL disabled by default).
+  - Fixed: appservice listen address changed from localhost to mautrix-discord
+    (container name) so Synapse can reach the bridge over Docker network.
+  - Fixed: registration.yaml url also updated to use container name.
+  - Fixed: permissions block now patched with real domain and admin user
+    instead of example.com placeholders.
+  - Bridge database (mautrix_discord) is now created automatically during
+    deployment.
 
-  NEW
-  • Admin panel selection: choose Element Admin (recommended) or
-    Synapse Admin — fully dynamic, only chosen panel deployed
-  • LiveKit JWT Service added for token generation
-  • LiveKit built-in TURN/STUN replaces coturn
-  • Add Bridges (option 5) fully implemented — auto-detects
-    install path from common locations and running container
-    volume mounts; works with other Docker Matrix deployments
-  • Input validation on all y/n and numbered prompts — invalid
-    input loops back with an error instead of silently continuing
+Cleanup / Uninstall:
+  - Cleanup now detects containers from other Matrix/Element compose projects
+    by project label (e.g. element-docker-demo, matrix-demo) in addition to
+    known Matrix images — catches postgres, redis, mailhog etc. from demo stacks.
+  - Foreign compose projects are brought down cleanly via docker compose down
+    before individual container removal, ensuring networks/volumes are cleaned.
 
-  IMPROVED
-  • Update check now runs before the menu (not inside it); shows
-    update prompt and restarts if accepted; header shows script
-    version only, no GitHub check in header
-  • Health checks now conditional — only installed services are
-    polled; added checks for LiveKit JWT, admin panels, and bridge
-    containers; warnings include correct docker logs command;
-    summary box shows FAILED state if any service missed
-  • Optional services selected before domain/subdomain prompts —
-    only enabled services get subdomain questions
-  • Bridge TUI (whiptail) uses terminal background color via
-    NEWT_COLORS instead of default blue
-  • Log viewer is a loop — Ctrl-C returns to container list; q
-    exits to main menu; stopped containers show last 50 lines
-  • Verify: optional containers show 'not installed' with neutral
-    dash instead of red ✗ 'not found'
-  • Credentials file saves full deployment summary: all URLs,
-    config paths, important notes, and bridge activation steps
-  • Per-bridge activation guides in deployment footer with exact
-    steps per bridge (OAuth, QR code, phone+code, etc.)
-  • Banner alignment fixed; removed (opt) labels
+Add Bridges (option 5) — Universal compatibility:
+  - Now auto-detects DB credentials (user + password) from existing
+    homeserver.yaml — no longer relies on variables from the current session,
+    which would be empty on a foreign deployment.
+  - Auto-detects postgres container name by scanning running containers for
+    known patterns (synapse-db, postgres, matrix-db, etc.).
+  - Auto-detects synapse container name and Docker network by inspecting the
+    running synapse container — bridge compose services now join the correct
+    network automatically.
+  - Falls back to interactive prompts if auto-detection fails.
+  - All bridge config patches (DB URI, synapse address, permissions) now use
+    the detected container names instead of hardcoded values.
+  - Works on any Docker-based Matrix deployment, not just installs from this
+    script.
 
-  REMOVED
-  • coturn container and all associated config
-  • TURN_SECRET generation (unused after coturn removal)
-  • Redundant check_for_updates call inside main_deployment
+All Bridges (Discord, Telegram, WhatsApp, Signal, Slack, Instagram):
+  - Fixed: DB URI was never patched — bridge crashed with
+    "appservice.database not configured" on every startup.
+  - Fixed: added ?sslmode=disable to DB URI — postgres container has SSL
+    disabled; without this the bridge panics with "SSL is not enabled".
+  - Fixed: appservice listen address changed from http://localhost:<port> to
+    http://mautrix-<bridge>:<port> — Synapse could not reach the bridge over
+    the Docker network with localhost, causing M_CONNECTION_FAILED ping loop.
+  - Fixed: registration.yaml url also updated to use container name.
+  - Fixed: permissions block now patched with real domain and admin user
+    instead of example.com placeholders — bridge crashed with
+    "bridge.permissions not configured".
+  - Bridge database (mautrix_<bridge>) is now created automatically.
 
-────────────────────────────────────────
-v1.1  (prior)
-────────────────────────────────────────
-  • Element Admin added as optional component
-  • Bridge selection improvements
-  • Fixed MAS OIDC configuration
-  • Caddy/Traefik auto-configuration added
-  • NPM step-by-step guide enhancements
+User Registration:
+  - Fixed: password_registration_enabled missing from MAS account config.
+    Despite policy.registration.enabled: true, the registration form was not
+    shown on auth.domain/register or auth.domain/account — the page showed
+    "Create an account" as text only with no input fields.
+    Root cause: MAS requires account.password_registration_enabled: true
+    separately from the policy block. Now set to match the registration choice
+    made during install.
 
-────────────────────────────────────────
-v1.0  (initial release)
-────────────────────────────────────────
-  • Interactive TUI deployment wizard
-  • Synapse + MAS + LiveKit + Element Web stack
-  • Support for NPM, Caddy, Traefik, Cloudflare Tunnel
-  • Optional bridges: Discord, Telegram, WhatsApp,
-    Signal, Slack, Instagram
+LiveKit JWT Service:
+  - Fixed: LIVEKIT_HOST renamed to LIVEKIT_URL — the lk-jwt-service image
+    changed the expected variable name; old name caused a restart loop with
+    "LIVEKIT_KEY[_FILE], LIVEKIT_SECRET[_FILE] and LIVEKIT_URL environment
+    variables must be set" on every startup despite vars being present.
+  - Fixed: LIVEKIT_JWT_PORT=8080 renamed to LIVEKIT_JWT_BIND=:8080 — old
+    variable is deprecated in current image and produced a warning in logs.
+
+Output / UX:
+  - register-user CLI examples now show USERNAME and PASSWORD placeholders
+    and include --yes flag to avoid interactive prompt errors.
+  - Custom server name option: warns if entered name contains no dot (not a
+    valid domain — MAS and federation require a real domain).
+  - Bridge registration output simplified: "✓ discord registered with Synapse"
+    instead of showing sender_localpart details.
+  - Appservice registration message lists bridge names with bullets in blue.
+  - Removed "(allow 30-60s to connect)" from bridge check message.
+  - Saved credentials file now matches on-screen output format exactly,
+    with a different footer warning for the file version.
+  - "Included Components:" header in banner is now properly centered.
+  - Removed duplicate "Generating $bridge config and registration..." line.
+
+v1.2 (2026-02-28)
+─────────────────
+  - Fixed Discord bridge generator: commands now passed as args to ENTRYPOINT.
+  - Fixed Discord bridge bot mismatch: sender_localpart patched in both
+    config.yaml and registration.yaml.
+  - Fixed MAS signing key permission denied: chmod 644 applied correctly.
+  - Fixed Element Admin healthcheck: replaced curl -f with HTTP status check
+    to handle 3xx redirects from nginx.
+  - Fixed LiveKit JWT service configuration.
+  - Added MSC3886 configuration for video calling.
+  - Added LiveKit multi-screenshare support (no artificial limits).
+  - Improved Docker Compose healthcheck reliability across all services.
+
+v1.1 (2026-02-20)
+─────────────────
+  - Initial public release.
+  - Full Matrix stack: Synapse, MAS, PostgreSQL, LiveKit, LiveKit JWT,
+    Sliding Sync, Element Web, Element Admin, Synapse Admin.
+  - Bridge support: Discord, Telegram, WhatsApp, Signal, Slack, Instagram.
+  - Proxy support: Nginx Proxy Manager, Traefik, Caddy.
+  - Automated admin user creation via MAS CLI.
+  - Well-known configuration via nginx.
+  - DNS and port forwarding guidance in deployment summary.
