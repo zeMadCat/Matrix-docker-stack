@@ -140,7 +140,7 @@ print_code() {
     local line
     echo -e "${ACCENT}   ┌─────────────────────────────────────────────────────────────┐${RESET}"
     while IFS= read -r line; do
-        echo -e "${ACCENT}   │${RESET} ${CODE}${line}${RESET}"
+        echo -e "${CODE}${line}${RESET}"
     done
     echo -e "${ACCENT}   └─────────────────────────────────────────────────────────────┘${RESET}"
 }
@@ -1549,6 +1549,22 @@ generate_mas_config() {
       - code"
     fi
 
+    # Build optional Element Admin client block
+    local ELEMENT_ADMIN_CLIENT_BLOCK=""
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        ELEMENT_ADMIN_CLIENT_BLOCK="
+  - client_id: \"$ELEMENT_ADMIN_CLIENT_ID\"
+    client_auth_method: none
+    client_uri: \"https://$SUB_ELEMENT_ADMIN.$DOMAIN/\"
+    redirect_uris:
+      - \"https://$SUB_ELEMENT_ADMIN.$DOMAIN/\"
+    grant_types:
+      - authorization_code
+      - refresh_token
+    response_types:
+      - code"
+    fi
+
     cat > "$TARGET_DIR/mas/config.yaml" << EOF
 # MAS (Matrix Authentication Service) Configuration
 
@@ -1569,6 +1585,7 @@ http:
         - name: compat
         - name: graphql
         - name: assets
+        - name: adminapi
       binds:
         - address: "[::]:8080"
     - name: internal
@@ -1608,6 +1625,7 @@ clients:
     client_auth_method: client_secret_basic
     client_secret: "$MAS_SECRET"
 $ELEMENT_CALL_CLIENT_BLOCK
+$ELEMENT_ADMIN_CLIENT_BLOCK
 
   - client_id: "$ELEMENT_WEB_CLIENT_ID"
     client_auth_method: none
@@ -1887,7 +1905,7 @@ COMPOSEEOF
     restart: unless-stopped\
     ports: [ "8014:8080" ]\
     environment:\
-      SERVER_NAME: https://REPLACE_SUB_MATRIX.REPLACE_DOMAIN\
+      SERVER_NAME: '"$SERVER_NAME"'\
     networks: [ matrix-net ]\
     labels:\
       com.docker.compose.project: "matrix-stack"\
@@ -2390,8 +2408,18 @@ $SUB_MATRIX.$DOMAIN {
 
 # MAS Authentication Service
 $SUB_MAS.$DOMAIN {
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        header Access-Control-Allow-Origin *
+        header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With"
+        header Access-Control-Max-Age "86400"
+        respond "" 204
+    }
     reverse_proxy $AUTO_LOCAL_IP:8010
-    header { Access-Control-Allow-Origin * }
+    header Access-Control-Allow-Origin *
+    header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    header Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With"
 }
 
 # Element Web
@@ -2550,6 +2578,8 @@ http:
       entryPoints: ["websecure"]
       tls:
         certResolver: letsencrypt
+      middlewares:
+        - cors-headers
 
     matrix-auth:
       rule: "Host(\`$SUB_MAS.$DOMAIN\`)"
@@ -2680,6 +2710,34 @@ location = /.well-known/matrix/client {
     add_header Cache-Control "no-cache" always;
 }
 
+# Matrix client API - required for auth_metadata and OIDC discovery (e.g. Element Admin)
+location ~* ^/_matrix/client/ {
+    proxy_pass http://$PROXY_IP:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+
+# Synapse ESS version endpoint - required for Element Admin
+location ~* ^/_synapse/ess/ {
+    proxy_pass http://$PROXY_IP:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+
 # Redirect root to Element Web
 location / {
     return 302 https://$SUB_ELEMENT.$DOMAIN;
@@ -2725,7 +2783,20 @@ location ~* ^/_matrix/client/(v3|r0)/(login|logout|refresh) {
     add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
 }
 
-# Synapse admin and client OIDC endpoints
+# Synapse admin API - required for Element Admin dashboard (rooms, users, server info)
+location ~* ^/_synapse/admin/ {
+    proxy_pass http://$PROXY_IP:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+
+# Synapse client OIDC endpoints
 location ~* ^/_synapse/client/ {
     proxy_pass http://$PROXY_IP:8008;
     proxy_http_version 1.1;
@@ -3131,6 +3202,13 @@ http:
         customResponseHeaders:
           Access-Control-Allow-Origin: "*"
           Content-Type: "application/json"
+
+    cors-headers:
+      headers:
+        customResponseHeaders:
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, PUT, DELETE, OPTIONS"
+          Access-Control-Allow-Headers: "Authorization, Content-Type, Accept"
 TRAEFIKCONF
 
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
@@ -4946,6 +5024,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     # Generate a random ULID for Element Call (make it available globally)
     ELEMENT_CALL_CLIENT_ID=$(generate_ulid)
     ELEMENT_WEB_CLIENT_ID=$(generate_ulid)
+    ELEMENT_ADMIN_CLIENT_ID=$(generate_ulid)
     
     # Sliding Sync secret (if enabled)
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
@@ -5040,9 +5119,8 @@ PROXY_IP="$AUTO_LOCAL_IP"
         docker exec synapse-db psql -U "$DB_USER" -tc \
             "SELECT 1 FROM pg_database WHERE datname='$_BNAME'" 2>/dev/null \
             | grep -q 1 || \
-            docker exec synapse-db psql -U "$DB_USER" \
-            -c "CREATE DATABASE $_BNAME OWNER $DB_USER;" 2>/dev/null \
-            && echo -e "   ${SUCCESS}✓ Created database: $_BNAME${RESET}"
+            docker exec synapse-db psql -U "$DB_USER" -q \
+            -c "CREATE DATABASE $_BNAME OWNER $DB_USER;" 2>/dev/null
     done
 
     # ── MAS (always required — must be healthy before Synapse) ───────────────
@@ -5308,12 +5386,9 @@ PROXY_IP="$AUTO_LOCAL_IP"
     elif echo "$REGISTER_OUTPUT" | grep -qi "already exists"; then
         echo -e "${INFO}ℹ  User already exists: @$ADMIN_USER:$SERVER_NAME${RESET}"
         # Try to ensure admin privileges
-        USER_ID=$(docker exec matrix-auth mas-cli manage list-users 2>&1 | grep -A10 "$ADMIN_USER" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
-        if [ -n "$USER_ID" ]; then
-            echo -e "${INFO}   Ensuring admin privileges...${RESET}"
-            docker exec matrix-auth mas-cli manage set-admin "$USER_ID" 2>&1 >/dev/null
-            echo -e "${SUCCESS}✓ Admin privileges confirmed${RESET}"
-        fi
+        echo -e "${INFO}   Ensuring admin privileges...${RESET}"
+        docker exec matrix-auth mas-cli manage promote-admin "$ADMIN_USER" 2>&1 >/dev/null
+        echo -e "${SUCCESS}✓ Admin privileges confirmed${RESET}"
     else
         echo -e "${ERROR}✗ Failed to register user. Output:${RESET}"
         echo "$REGISTER_OUTPUT"
