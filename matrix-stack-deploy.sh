@@ -3,7 +3,7 @@
 ################################################################################
 #                                                                              #
 #                    MATRIX SYNAPSE FULL STACK DEPLOYER                        #
-#                              Version 1.3                                     #
+#                              Version 1.4                                     #
 #                           by MadCat (Production)                             #
 #                                                                              #
 #  A comprehensive deployment script for Matrix Synapse with working           #
@@ -27,7 +27,7 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.3"
+SCRIPT_VERSION="1.4"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 

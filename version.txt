@@ -2,6 +2,45 @@ Matrix Synapse Full Stack Deployer — Changelog
 by MadCat
 ================================================================================
 
+v1.4 (2026-03-02)
+─────────────────
+Cross-distro compatibility (Arch Linux):
+  - Fixed local IP detection: `hostname -I` is not available on Arch Linux
+    (inetutils ships a different hostname binary without the -I flag).
+    Now uses `ip route get 1` as primary method to extract the src address,
+    falling back to `hostname -I` if the result is empty. Works correctly
+    on Arch, Ubuntu, Debian, and any distro with iproute2.
+  - Fixed Docker log rotation: `mkdir -p /etc/docker` now runs before writing
+    daemon.json. On fresh Arch installs the /etc/docker directory does not
+    exist yet, causing "No such file or directory" error and silently skipping
+    log rotation configuration.
+
+MAS (Matrix Authentication Service):
+  - Fixed matrix.homeserver: was hardcoded to $DOMAIN, now correctly uses
+    $SERVER_NAME. Previously, choosing `matrix.example.com` as server name
+    during setup would result in user IDs of `@user:example.com` instead of
+    the expected `@user:matrix.example.com`. Both server name options now
+    work as fully independent choices with consistent user ID assignment
+    across MAS, Synapse, Element Web, Element Call, and Element Admin.
+
+NPM Proxy Guide:
+  - Base domain and matrix homeserver advanced tab configs now include a
+    global CORS preflight handler block (`if ($request_method = OPTIONS)`)
+    placed before all location blocks. Without this, OPTIONS preflight
+    requests from browsers hit nginx before any location match and return
+    no Access-Control-Allow-Origin header, causing CORS failures in
+    Element Admin and other clients.
+  - Complete location block set now documented for both proxy hosts:
+    MAS login/logout/refresh routing, /_synapse/admin/ (base domain only),
+    /_synapse/client/, and /_matrix/ with WebSocket upgrade support.
+  - proxy_hide_header directives for Synapse's own CORS headers documented
+    to prevent duplicate header conflicts.
+
+Element Admin:
+  - SERVER_NAME environment variable confirmed correct: bare domain only
+    (e.g. `example.com`), not a full URL. Full URL caused Element Admin
+    to fail client registration against MAS on startup.
+
 v1.3 (2026-03-01)
 ─────────────────
 MAS (Matrix Authentication Service):

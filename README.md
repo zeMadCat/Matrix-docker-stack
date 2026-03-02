@@ -1,6 +1,5 @@
 <div align="center">
   <img src="images/mds.png" alt="Matrix Docker Stack" style="width: min(450px, 100%)"/>
-  <p><em>Vibecoded — built for personal use, shared because it works.</em></p>
   <p>A single interactive bash script that deploys a full Matrix homeserver stack on any Linux machine with Docker.</p>
 </div>
 
@@ -10,6 +9,7 @@
 >
 > | Version | Date | What changed |
 > |---------|------|--------------|
+> | **v1.4** | 2026-03-02 | Fixed local IP detection: replaced `hostname -I` (not available on Arch/inetutils) with `ip route get` as primary, falling back to `hostname -I`. Fixed Docker log rotation: `mkdir -p /etc/docker` now runs before writing `daemon.json` — on fresh Arch installs the directory does not exist, causing a write error. Fixed MAS `matrix.homeserver`: now uses `$SERVER_NAME` instead of `$DOMAIN` — choosing `matrix.example.com` as server name now correctly results in `@user:matrix.example.com` user IDs rather than `@user:example.com`. Fixed NPM proxy guide: base domain and matrix homeserver advanced tab configs now include full CORS preflight handler (`if ($request_method = OPTIONS)`) and complete location blocks for `/_matrix/`, `/_synapse/admin/`, `/_synapse/client/`, and MAS login routing — prevents browser CORS errors with Element Admin and other clients. Element Admin `SERVER_NAME` env var confirmed correct (bare domain, not full URL). |
 > | **v1.3** | 2026-03-01 | Fixed MAS signing key: RSA (RS256) key now generated alongside EC — previously only EC, causing token signing failures at login. Fixed all bridges (Discord, Telegram, WhatsApp, Signal, Slack, Instagram): database URI, SSL mode (`?sslmode=disable`), container address (`localhost` → container name), and permissions block (`example.com` placeholders replaced). **Add Bridges (option 5) is now truly universal**: auto-detects DB credentials from existing `homeserver.yaml`, postgres container name, synapse container name, and Docker network — works correctly on any Docker-based Matrix deployment, not just installs from this script. Fixed user registration: `password_registration_enabled` now correctly set in MAS config — registration form was missing from auth page despite registration being enabled. Fixed LiveKit JWT service: `LIVEKIT_HOST` renamed to `LIVEKIT_URL` and `LIVEKIT_JWT_PORT` renamed to `LIVEKIT_JWT_BIND` to match current `lk-jwt-service` image — previously caused restart loop on every deploy. Cleanup/uninstall now detects Matrix resources from other deployments (e.g. `element-docker-demo`) by compose project label. Improved CLI output and register-user examples. |
 > | **v1.2** | 2026-03-01 | Admin panel choice (Element Admin / Synapse Admin). Replaced coturn with LiveKit TURN/STUN. Added LiveKit JWT Service. Optional services selected before domain prompts. Detailed per-bridge activation guides. Log viewer loops — Ctrl-C returns to container list. Verify shows `not installed` for optional containers. Add Bridges (option 5) auto-detects install path, works with other Docker Matrix deployments. Bridge TUI uses terminal background color. Update check now runs before the menu and offers to update; version display in header shows script version only. Health checks are now conditional — only installed services are checked; added LiveKit JWT, admin panel, and bridge checks; warnings include the correct `docker logs` command. Input validation on all y/n and numbered prompts — invalid input loops until corrected. Fixed admin password logic (variable mismatch). **Bridges fixed**: `registration.yaml` files are now registered with Synapse via `app_service_config_files` in `homeserver.yaml`, and the bridges directory is mounted into the Synapse container — previously bridges installed silently but DMs to bridge bots did nothing. **MAS signing key fixed**: now uses `openssl genpkey` with a file-based approach to guarantee a valid PKCS#8 key; invalid signing keys caused "something went wrong" on login. |
 > | v1.1 | prior | Element Admin added, bridge selection improvements, fixed MAS OIDC, Caddy/Traefik auto-config |
@@ -48,7 +48,7 @@ Optional bridges selected during install:
 
 ## Requirements
 
-- A Linux server (tested on Ubuntu 22.04/24.04, Debian 12/13)
+- A Linux server (tested on Ubuntu 22.04/24.04, Debian 12/13, Arch Linux)
 - Docker + Docker Compose
 - A domain with DNS access
 - A reverse proxy (NPM, Caddy, Traefik, or Cloudflare Tunnel)
