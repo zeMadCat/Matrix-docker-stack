@@ -958,6 +958,7 @@ CRONEOF
             cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
         fi
         
+        mkdir -p /etc/docker
         cat > /etc/docker/daemon.json << 'DOCKERDAEMONEOF'
 {
   "log-driver": "json-file",
@@ -1616,7 +1617,7 @@ upstream_oauth2:
   providers: []
 
 matrix:
-  homeserver: "$DOMAIN"
+  homeserver: "$SERVER_NAME"
   secret: "$MAS_SECRET"
   endpoint: http://synapse:8008
 
@@ -4457,7 +4458,10 @@ main_deployment() {
     fi
     
     DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-    DETECTED_LOCAL=$(hostname -I | awk '{print $1}')
+    DETECTED_LOCAL=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+    if [ -z "$DETECTED_LOCAL" ]; then
+        DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
     
     echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
     echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
