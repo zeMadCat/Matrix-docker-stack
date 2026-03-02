@@ -2691,80 +2691,14 @@ show_npm_guide() {
     echo -e "\n${ACCENT}════════════════════════ BASE DOMAIN ════════════════════════════${RESET}"
     echo -e "${ACCENT}Create Proxy Host:${RESET}"
     echo -e "   Domain:     ${INFO}$DOMAIN${RESET}"
-    echo -e "   Forward to: ${INFO}http://$PROXY_IP:80${RESET}  ← port doesn't matter, location blocks override"
+    echo -e "   Forward to: ${INFO}http://$PROXY_IP:8008${RESET}"
     echo -e "   Enable:     SSL (Force HTTPS), Let's Encrypt certificate\n"
     echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
     print_code << BASECONF
-# Matrix well-known - required for client and federation discovery
-location = /.well-known/matrix/server {
-    return 200 '{"m.server": "$SUB_MATRIX.$DOMAIN:443"}';
-    default_type application/json;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Cache-Control "no-cache" always;
-}
-
-location = /.well-known/matrix/client {
-    return 200 '{"m.homeserver":{"base_url":"https://$SUB_MATRIX.$DOMAIN"},"m.identity_server":{"base_url":"https://vector.im"},"m.authentication":{"issuer":"https://$SUB_MAS.$DOMAIN/","account":"https://$SUB_MAS.$DOMAIN/account"},"org.matrix.msc3575.proxy":{"url":"https://$SUB_SLIDING_SYNC.$DOMAIN"},"org.matrix.msc4143.rtc_focus":{"url":"https://$SUB_LIVEKIT.$DOMAIN"}}';
-    default_type application/json;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Cache-Control "no-cache" always;
-}
-
-# Matrix client API - required for auth_metadata and OIDC discovery (e.g. Element Admin)
-location ~* ^/_matrix/client/ {
-    proxy_pass http://$PROXY_IP:8008;
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_hide_header Access-Control-Allow-Origin;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
-}
-
-# Synapse ESS version endpoint - required for Element Admin
-location ~* ^/_synapse/ess/ {
-    proxy_pass http://$PROXY_IP:8008;
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_hide_header Access-Control-Allow-Origin;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
-}
-
-# Redirect root to Element Web
-location / {
-    return 302 https://$SUB_ELEMENT.$DOMAIN;
-}
-BASECONF
-    echo -e "${WARNING}Press ENTER to continue...${RESET}"
-    read -r
-
-    ##########################################################################
-    # MATRIX HOMESERVER
-    ##########################################################################
-    clear
-    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
-    echo -e "${BANNER}│               NPM SETUP - MATRIX HOMESERVER                  │${RESET}"
-    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
-    echo -e "\n${ACCENT}Create Proxy Host:${RESET}"
-    echo -e "   Domain:     ${INFO}$SUB_MATRIX.$DOMAIN${RESET}"
-    echo -e "   Forward to: ${INFO}http://$PROXY_IP:8008${RESET}"
-    echo -e "   Enable:     Websockets, SSL (Force HTTPS)"
-    echo -e "   ${WARNING}⚠  Do NOT enable Block Exploits / ModSecurity — it breaks Matrix API calls${RESET}\n"
-    echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
-    print_code << MATRIXCONF
 # Strip Synapse's own CORS headers to prevent duplicates (causes browser CORS errors)
 proxy_hide_header Access-Control-Allow-Origin;
 proxy_hide_header Access-Control-Allow-Methods;
 proxy_hide_header Access-Control-Allow-Headers;
-
 client_max_body_size 50M;
 proxy_read_timeout 600s;
 proxy_send_timeout 600s;
@@ -2791,6 +2725,73 @@ location ~* ^/_synapse/admin/ {
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+
+# Synapse client OIDC endpoints
+location ~* ^/_synapse/client/ {
+    proxy_pass http://$PROXY_IP:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+
+# All other Matrix API endpoints
+location ~* ^/_matrix/ {
+    proxy_pass http://$PROXY_IP:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+BASECONF
+    echo -e "${WARNING}Press ENTER to continue...${RESET}"
+    read -r
+
+    ##########################################################################
+    # MATRIX HOMESERVER
+    ##########################################################################
+    clear
+    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BANNER}│               NPM SETUP - MATRIX HOMESERVER                  │${RESET}"
+    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+    echo -e "\n${ACCENT}Create Proxy Host:${RESET}"
+    echo -e "   Domain:     ${INFO}$SUB_MATRIX.$DOMAIN${RESET}"
+    echo -e "   Forward to: ${INFO}http://$PROXY_IP:8008${RESET}"
+    echo -e "   Enable:     Websockets, SSL (Force HTTPS)"
+    echo -e "   ${WARNING}⚠  Do NOT enable Block Exploits / ModSecurity — it breaks Matrix API calls${RESET}\n"
+    echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
+    print_code << MATRIXCONF
+# Strip Synapse's own CORS headers to prevent duplicates (causes browser CORS errors)
+proxy_hide_header Access-Control-Allow-Origin;
+proxy_hide_header Access-Control-Allow-Methods;
+proxy_hide_header Access-Control-Allow-Headers;
+client_max_body_size 50M;
+proxy_read_timeout 600s;
+proxy_send_timeout 600s;
+
+# CRITICAL: login/logout/refresh MUST route to MAS (not Synapse) when OIDC is enabled
+location ~* ^/_matrix/client/(v3|r0)/(login|logout|refresh) {
+    proxy_pass http://$PROXY_IP:8010;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-Host \$host;
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
