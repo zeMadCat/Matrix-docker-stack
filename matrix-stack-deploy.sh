@@ -3423,6 +3423,41 @@ MEDIACONF
     read -r
 }
 
+# Display latest changelog
+show_changelog() {
+    clear
+    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BANNER}│                        CHANGELOG                             │${RESET}"
+    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+    echo -e ""
+    echo -e "${ACCENT}v${SCRIPT_VERSION}${RESET} — latest"
+    echo -e "${INFO}────────────────────────────────────────────${RESET}"
+    echo -e ""
+    echo -e "  ${SUCCESS}•${RESET} Element X support — ${INFO}msc4186_enabled: true${RESET} added to Synapse"
+    echo -e "  ${SUCCESS}•${RESET} Caddy/Traefik guided setup for existing proxy installs"
+    echo -e "  ${SUCCESS}•${RESET} Caddy auto-install fix — premature reload removed"
+    echo -e "  ${SUCCESS}•${RESET} Arch Linux fixes — IP detection and daemon.json write"
+    echo -e "  ${SUCCESS}•${RESET} LiveKit JWT port changed to ${INFO}8089${RESET} (Traefik conflict fix)"
+    echo -e ""
+    echo -e "${ACCENT}v1.5${RESET}"
+    echo -e "${INFO}────────────────────────────────────────────${RESET}"
+    echo -e ""
+    echo -e "  ${SUCCESS}•${RESET} Pangolin reverse proxy support (Newt tunnel, zero open ports)"
+    echo -e "  ${SUCCESS}•${RESET} Storage check before path selection"
+    echo -e "  ${SUCCESS}•${RESET} Network detection revamp with re-detect loop and manual fallback"
+    echo -e "  ${SUCCESS}•${RESET} NPM base domain config rewrite (inline well-known, Element Admin)"
+    echo -e "  ${SUCCESS}•${RESET} MAS config fix — homeserver uses SERVER_NAME not DOMAIN"
+    echo -e "  ${SUCCESS}•${RESET} Version detection handles v/V tag prefixes"
+    echo -e ""
+    echo -e "${ACCENT}v1.4 — v1.0${RESET}"
+    echo -e "${INFO}────────────────────────────────────────────${RESET}"
+    echo -e ""
+    echo -e "  ${TEXT_MUTED:-}See version.txt for full history${RESET}"
+    echo -e ""
+    echo -e "${WARNING}Press ENTER to return to menu...${RESET}"
+    read -r
+}
+
 # Display Cloudflare Tunnel setup guide
 show_cloudflare_guide() {
     clear
@@ -5768,11 +5803,12 @@ while true; do
     echo -e "   ${INFO}3)${RESET} ${SUCCESS}Uninstall${RESET} — Remove the Matrix stack and all data"
     echo -e "   ${INFO}4)${RESET} ${SUCCESS}Verify${RESET}    — Check integrity of an existing installation"
     echo -e "   ${INFO}5)${RESET} ${SUCCESS}Bridges${RESET}   — Add or manage bridges to existing installation"
-    echo -e "   ${INFO}6)${RESET} ${WARNING}Logs${RESET}      — View container logs for troubleshooting"
+    echo -e "   ${INFO}6)${RESET} ${CODE}Changelog${RESET} — View latest version changelog"
+    echo -e "   ${INFO}7)${RESET} ${WARNING}Logs${RESET}      — View container logs for troubleshooting"
     echo -e ""
     echo -e "   ${INFO}0)${RESET} ${ERROR}Exit${RESET}"
     echo -e ""
-    ask_choice MENU_SELECT "Selection (0-6): " 0 1 2 3 4 5 6
+    ask_choice MENU_SELECT "Selection (0-7): " 0 1 2 3 4 5 6 7
 
     case $MENU_SELECT in
         0)
@@ -5817,9 +5853,13 @@ while true; do
             draw_header
             ;;
         6)
-            run_logs
+            show_changelog
             draw_header
             ;;
+        7)
+            run_logs
+            draw_header
+            ;;    
     esac
 done
 
