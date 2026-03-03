@@ -173,7 +173,7 @@ draw_header() {
     echo -e "${BANNER}│  ───────────         │  ───────────                          │${RESET}"
     echo -e "${BANNER}│  • Synapse           │  - Discord     - Telegram             │${RESET}"
     echo -e "${BANNER}│  • MAS               │  - WhatsApp    - Signal               │${RESET}"
-    echo -e "${BANNER}│  • LiveKit           │  - Slack       - Instagram            │${RESET}"
+    echo -e "${BANNER}│  • LiveKit           │  - Slack       - Meta (FB/Instagram)  │${RESET}"
     echo -e "${BANNER}│  • LiveKit JWT       │                                       │${RESET}"
     echo -e "${BANNER}│  • PostgreSQL        │  FEATURES                             │${RESET}"
     echo -e "${BANNER}│  • Element Call *    │  ───────────                          │${RESET}"
@@ -373,13 +373,13 @@ save_credentials_prompt() {
                     echo "   Step 2:    Follow the OAuth link"
                     echo "   Docs:      https://docs.mau.fi/bridges/go/slack/authentication.html"
                     ;;
-                instagram)
+                meta)
                     echo ""
-                    echo "   ── Instagram ────────────────────────────────────────"
-                    echo "   Bot user:  @instagrambot:$DOMAIN"
+                    echo "   ── Meta (Facebook Messenger / Instagram) ────────────"
+                    echo "   Bot user:  @instagrambot:$DOMAIN (Instagram) or @facebookbot:$DOMAIN (Messenger)"
                     echo "   Step 1:    Send: login"
-                    echo "   Step 2:    Enter your username and password"
-                    echo "   Docs:      https://docs.mau.fi/bridges/go/instagram/authentication.html"
+                    echo "   Step 2:    Follow prompts to paste browser cookies from instagram.com or facebook.com"
+                    echo "   Docs:      https://docs.mau.fi/bridges/go/meta/authentication.html"
                     ;;
             esac
         done
@@ -434,7 +434,7 @@ draw_footer() {
     echo -e "   ${ACCENT}Create a regular user:${RESET}"
     echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --yes${RESET}"
     echo -e ""
-    echo -e "   ${ACCENT}Create an admin user:${RESET}"
+    echo -e "   ${ACCENT}Create an admin user: (lowercase only)${RESET}"
     echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --admin --yes${RESET}"
     echo -e ""
     echo -e "   ${ACCENT}Or register via the MAS web UI:${RESET}"
@@ -771,15 +771,15 @@ draw_footer() {
                     echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/slack/authentication.html"
                     echo -e ""
                     ;;
-                instagram)
-                    echo -e "   ${SUCCESS}── Instagram ────────────────────────────────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @instagrambot:$DOMAIN"
+                meta)
+                    echo -e "   ${SUCCESS}── Meta (Facebook Messenger / Instagram) ─────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @instagrambot:$DOMAIN (Instagram) or @facebookbot:$DOMAIN (Messenger)"
                     echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    Enter your Instagram username when prompted"
-                    echo -e "   ${INFO}Step 3:${RESET}    Enter your Instagram password"
-                    echo -e "   ${INFO}2FA:${RESET}       Enter the 2FA code if your account uses it"
-                    echo -e "   ${WARNING}Note:${RESET}      Instagram actively restricts automation — use at own risk"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/instagram/authentication.html"
+                    echo -e "   ${INFO}Step 2:${RESET}    Open instagram.com or facebook.com in a private browser window"
+                    echo -e "   ${INFO}Step 3:${RESET}    Open DevTools → Network tab → filter XHR → search 'graphql'"
+                    echo -e "   ${INFO}Step 4:${RESET}    Log in, right-click a request → Copy as cURL → paste to bot"
+                    echo -e "   ${WARNING}Note:${RESET}      Meta actively restricts automation — use at own risk"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/meta/authentication.html"
                     echo -e ""
                     ;;
             esac
@@ -1308,7 +1308,7 @@ generate_bridge_configs() {
 
     for bridge in "${SELECTED_BRIDGES[@]}"; do
         case $bridge in
-            discord|telegram|whatsapp|signal|slack|instagram)
+            discord|telegram|whatsapp|signal|slack|meta)
                 mkdir -p "$TARGET_DIR/bridges/$bridge"
 
                 # The binary requires a config.yaml to exist before -g will work.
@@ -2129,7 +2129,7 @@ COMPOSEEOF
     if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
         for bridge in "${SELECTED_BRIDGES[@]}"; do
             case $bridge in
-                discord|telegram|whatsapp|signal|slack|instagram)
+                discord|telegram|whatsapp|signal|slack|meta)
                     sed -i '/^networks:/i\
 \
   # mautrix-'"$bridge"' Bridge\
@@ -4165,7 +4165,7 @@ run_add_bridges() {
 
     # ── Already installed bridges ──────────────────────────────────────────
     local INSTALLED=()
-    for b in discord telegram whatsapp signal slack instagram; do
+    for b in discord telegram whatsapp signal slack meta; do
         if [ -d "$BRIDGE_DIR/bridges/$b" ]; then
             INSTALLED+=("$b")
         fi
@@ -4230,7 +4230,7 @@ helpline=white,black
             "whatsapp"  "WhatsApp  — Connect to WhatsApp (requires phone)"  OFF \
             "signal"    "Signal    — Connect to Signal (requires phone)"    OFF \
             "slack"     "Slack     — Connect to Slack workspaces"           OFF \
-            "instagram" "Instagram — Connect to Instagram DMs"              OFF \
+            "meta"      "Meta      — Connect to Facebook Messenger / Instagram" OFF \
             3>&1 1>&2 2>&3)
 
         local EXIT_CODE=$?
@@ -4466,7 +4466,7 @@ helpline=white,black
             whatsapp)  echo -e "   ${SUCCESS}•${RESET} WhatsApp:  DM ${WARNING}@whatsappbot:$DOMAIN${RESET}  → send ${WARNING}login${RESET} → scan QR in WhatsApp" ;;
             signal)    echo -e "   ${SUCCESS}•${RESET} Signal:    DM ${WARNING}@signalbot:$DOMAIN${RESET}    → send ${WARNING}link${RESET}  → scan QR in Signal" ;;
             slack)     echo -e "   ${SUCCESS}•${RESET} Slack:     DM ${WARNING}@slackbot:$DOMAIN${RESET}     → send ${WARNING}login${RESET} → follow OAuth link" ;;
-            instagram) echo -e "   ${SUCCESS}•${RESET} Instagram: DM ${WARNING}@instagrambot:$DOMAIN${RESET} → send ${WARNING}login${RESET} → enter username + password" ;;
+            meta) echo -e "   ${SUCCESS}•${RESET} Meta: DM ${WARNING}@instagrambot:$DOMAIN${RESET} or ${WARNING}@facebookbot:$DOMAIN${RESET} → send ${WARNING}login${RESET} → paste browser cookies" ;;
         esac
     done
 
@@ -4743,34 +4743,205 @@ main_deployment() {
     ############################################################################
         # STEP 5: Deployment Path Selection                                       #
     ############################################################################
-    
+
+    echo -e "\n${ACCENT}>> Checking storage availability...${RESET}"
+
+    # Function to convert bytes to human readable
+    bytes_to_human() {
+        local bytes=$1
+        if [ $bytes -lt 1024 ]; then
+            echo "${bytes}B"
+        elif [ $bytes -lt 1048576 ]; then
+            echo "$(( (bytes + 512) / 1024 ))KB"
+        elif [ $bytes -lt 1073741824 ]; then
+            echo "$(( (bytes + 524288) / 1048576 ))MB"
+        else
+            echo "$(( (bytes + 536870912) / 1073741824 ))GB"
+        fi
+    }
+
+    # Calculate estimated storage needed (based on typical usage)
+    ESTIMATED_STORAGE=5368709120  # 5GB in bytes (conservative estimate)
+    echo -e "   ${INFO}Estimated storage needed:${RESET} ${WARNING}$(bytes_to_human $ESTIMATED_STORAGE)${RESET} (for base installation)"
+    echo -e "   ${INFO}Media storage will grow with usage${RESET}"
+    echo ""
+
+    # Get storage info for root filesystem
+    ROOT_STATS=$(df -k / | tail -1)
+    ROOT_AVAIL_KB=$(echo "$ROOT_STATS" | awk '{print $4}')
+    ROOT_AVAIL_BYTES=$((ROOT_AVAIL_KB * 1024))
+    ROOT_TOTAL_KB=$(echo "$ROOT_STATS" | awk '{print $2}')
+    ROOT_TOTAL_BYTES=$((ROOT_TOTAL_KB * 1024))
+    ROOT_USED_PERCENT=$(echo "$ROOT_STATS" | awk '{print $5}' | tr -d '%')
+
+    echo -e "   ${INFO}Root filesystem (/):${RESET}"
+    echo -e "      ${SUCCESS}Total:${RESET}  $(bytes_to_human $ROOT_TOTAL_BYTES)"
+    echo -e "      ${SUCCESS}Free:${RESET}   ${WARNING}$(bytes_to_human $ROOT_AVAIL_BYTES)${RESET}"
+    echo -e "      ${SUCCESS}Used:${RESET}   $ROOT_USED_PERCENT%"
+
+    # Warning if free space is low
+    if [ $ROOT_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+        echo -e "\n   ${WARNING}⚠️  WARNING: Free space may be insufficient for base installation!${RESET}"
+        echo -e "   ${WARNING}   Recommended: at least $(bytes_to_human $ESTIMATED_STORAGE) free${RESET}"
+    fi
+
     echo -e "\n${ACCENT}>> Selecting deployment path...${RESET}"
     CUR_DIR=$(pwd)
 
     if [ "$DOCKGE_FOUND" = true ]; then
-        echo -e "   ${CHOICE_COLOR}1)${RESET} ${SUCCESS}Dockge Path (Recommended):${RESET} /opt/stacks/matrix-stack"
-        echo -e "   ${CHOICE_COLOR}2)${RESET} Current Directory:         $CUR_DIR/matrix-stack"
-        echo -e "   ${CHOICE_COLOR}3)${RESET} Custom Path"
+        echo -e "\n   ${INFO}Storage for each option:${RESET}"
+
+        # Check Dockge path
+        DOCKGE_STATS=$(df -k "/opt/stacks" 2>/dev/null | tail -1)
+        if [ -n "$DOCKGE_STATS" ]; then
+            DOCKGE_AVAIL_KB=$(echo "$DOCKGE_STATS" | awk '{print $4}')
+            DOCKGE_AVAIL_BYTES=$((DOCKGE_AVAIL_KB * 1024))
+            echo -e "      ${CHOICE_COLOR}1)${RESET} Dockge Path:       ${SUCCESS}$(bytes_to_human $DOCKGE_AVAIL_BYTES) free${RESET}"
+        else
+            echo -e "      ${CHOICE_COLOR}1)${RESET} Dockge Path:       ${WARNING}Unable to check${RESET}"
+        fi
+
+        # Check current directory
+        CUR_STATS=$(df -k "$CUR_DIR" | tail -1)
+        CUR_AVAIL_KB=$(echo "$CUR_STATS" | awk '{print $4}')
+        CUR_AVAIL_BYTES=$((CUR_AVAIL_KB * 1024))
+        echo -e "      ${CHOICE_COLOR}2)${RESET} Current Directory: ${SUCCESS}$(bytes_to_human $CUR_AVAIL_BYTES) free${RESET}"
+        echo -e "      ${CHOICE_COLOR}3)${RESET} Custom Path"
+
         ask_choice PATH_SELECT "Selection (1/2/3): " 1 2 3
         case $PATH_SELECT in
             1) TARGET_DIR="/opt/stacks/matrix-stack" ;;
             2) TARGET_DIR="$CUR_DIR/matrix-stack" ;;
-            3) echo -ne "Enter Full Path: ${WARNING}"; read -r TARGET_DIR; echo -e "${RESET}" ;;
+            3)
+                while true; do
+                    echo -ne "Enter Full Path: ${WARNING}"
+                    read -r TARGET_DIR
+                    echo -e "${RESET}"
+                    if [ -d "$TARGET_DIR" ]; then
+                        CUSTOM_STATS=$(df -k "$TARGET_DIR" | tail -1)
+                        CUSTOM_AVAIL_KB=$(echo "$CUSTOM_STATS" | awk '{print $4}')
+                        CUSTOM_AVAIL_BYTES=$((CUSTOM_AVAIL_KB * 1024))
+                        echo -e "   ${INFO}Free space at $TARGET_DIR: ${WARNING}$(bytes_to_human $CUSTOM_AVAIL_BYTES)${RESET}"
+                        if [ $CUSTOM_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+                            echo -e "   ${WARNING}⚠️  Warning: Low free space!${RESET}"
+                            ask_yn CONTINUE_ANYWAY "Continue anyway? (y/n): "
+                            if [[ ! "$CONTINUE_ANYWAY" =~ ^[Yy]$ ]]; then
+                                echo -e "   ${INFO}Please choose another path.${RESET}"
+                                continue
+                            fi
+                        fi
+                        break
+                    else
+                        PARENT_DIR=$(dirname "$TARGET_DIR")
+                        if [ -d "$PARENT_DIR" ]; then
+                            PARENT_STATS=$(df -k "$PARENT_DIR" | tail -1)
+                            PARENT_AVAIL_KB=$(echo "$PARENT_STATS" | awk '{print $4}')
+                            PARENT_AVAIL_BYTES=$((PARENT_AVAIL_KB * 1024))
+                            echo -e "   ${INFO}Free space on $PARENT_DIR: ${WARNING}$(bytes_to_human $PARENT_AVAIL_BYTES)${RESET}"
+                            if [ $PARENT_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+                                echo -e "   ${WARNING}⚠️  Warning: Low free space on parent directory!${RESET}"
+                                ask_yn CONTINUE_ANYWAY "Continue anyway? (y/n): "
+                                if [[ ! "$CONTINUE_ANYWAY" =~ ^[Yy]$ ]]; then
+                                    echo -e "   ${INFO}Please choose another path.${RESET}"
+                                    continue
+                                fi
+                            fi
+                        fi
+                        break
+                    fi
+                done
+                ;;
         esac
     elif [ "$DOCKER_READY" = true ]; then
-        echo -e "   ${CHOICE_COLOR}1)${RESET} ${SUCCESS}Current Directory (Recommended):${RESET} $CUR_DIR/matrix-stack"
-        echo -e "   ${CHOICE_COLOR}2)${RESET} Custom Path"
+        echo -e "\n   ${INFO}Storage for each option:${RESET}"
+
+        CUR_STATS=$(df -k "$CUR_DIR" | tail -1)
+        CUR_AVAIL_KB=$(echo "$CUR_STATS" | awk '{print $4}')
+        CUR_AVAIL_BYTES=$((CUR_AVAIL_KB * 1024))
+        echo -e "      ${CHOICE_COLOR}1)${RESET} Current Directory: ${SUCCESS}$(bytes_to_human $CUR_AVAIL_BYTES) free${RESET}"
+        echo -e "      ${CHOICE_COLOR}2)${RESET} Custom Path"
+
         ask_choice PATH_SELECT "Selection (1/2): " 1 2
         if [[ "$PATH_SELECT" == "1" ]]; then
             TARGET_DIR="$CUR_DIR/matrix-stack"
         else
-            echo -ne "Enter Full Path: ${WARNING}"; read -r TARGET_DIR; echo -e "${RESET}"
+            while true; do
+                echo -ne "Enter Full Path: ${WARNING}"
+                read -r TARGET_DIR
+                echo -e "${RESET}"
+                if [ -d "$TARGET_DIR" ]; then
+                    CUSTOM_STATS=$(df -k "$TARGET_DIR" | tail -1)
+                    CUSTOM_AVAIL_KB=$(echo "$CUSTOM_STATS" | awk '{print $4}')
+                    CUSTOM_AVAIL_BYTES=$((CUSTOM_AVAIL_KB * 1024))
+                    echo -e "   ${INFO}Free space at $TARGET_DIR: ${WARNING}$(bytes_to_human $CUSTOM_AVAIL_BYTES)${RESET}"
+                    if [ $CUSTOM_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+                        echo -e "   ${WARNING}⚠️  Warning: Low free space!${RESET}"
+                        ask_yn CONTINUE_ANYWAY "Continue anyway? (y/n): "
+                        if [[ ! "$CONTINUE_ANYWAY" =~ ^[Yy]$ ]]; then
+                            echo -e "   ${INFO}Please choose another path.${RESET}"
+                            continue
+                        fi
+                    fi
+                    break
+                else
+                    PARENT_DIR=$(dirname "$TARGET_DIR")
+                    if [ -d "$PARENT_DIR" ]; then
+                        PARENT_STATS=$(df -k "$PARENT_DIR" | tail -1)
+                        PARENT_AVAIL_KB=$(echo "$PARENT_STATS" | awk '{print $4}')
+                        PARENT_AVAIL_BYTES=$((PARENT_AVAIL_KB * 1024))
+                        echo -e "   ${INFO}Free space on $PARENT_DIR: ${WARNING}$(bytes_to_human $PARENT_AVAIL_BYTES)${RESET}"
+                        if [ $PARENT_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+                            echo -e "   ${WARNING}⚠️  Warning: Low free space on parent directory!${RESET}"
+                            ask_yn CONTINUE_ANYWAY "Continue anyway? (y/n): "
+                            if [[ ! "$CONTINUE_ANYWAY" =~ ^[Yy]$ ]]; then
+                                echo -e "   ${INFO}Please choose another path.${RESET}"
+                                continue
+                            fi
+                        fi
+                    fi
+                    break
+                fi
+            done
         fi
     else
-        echo -ne "Enter Deployment Path (Default /opt/matrix-stack): ${WARNING}"
-        read -r TARGET_DIR
-        echo -e "${RESET}"
-        TARGET_DIR=${TARGET_DIR:-/opt/matrix-stack}
+        while true; do
+            echo -ne "Enter Deployment Path (Default /opt/matrix-stack): ${WARNING}"
+            read -r TARGET_DIR
+            echo -e "${RESET}"
+            TARGET_DIR=${TARGET_DIR:-/opt/matrix-stack}
+            if [ -d "$TARGET_DIR" ]; then
+                CUSTOM_STATS=$(df -k "$TARGET_DIR" | tail -1)
+                CUSTOM_AVAIL_KB=$(echo "$CUSTOM_STATS" | awk '{print $4}')
+                CUSTOM_AVAIL_BYTES=$((CUSTOM_AVAIL_KB * 1024))
+                echo -e "   ${INFO}Free space at $TARGET_DIR: ${WARNING}$(bytes_to_human $CUSTOM_AVAIL_BYTES)${RESET}"
+                if [ $CUSTOM_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+                    echo -e "   ${WARNING}⚠️  Warning: Low free space!${RESET}"
+                    ask_yn CONTINUE_ANYWAY "Continue anyway? (y/n): "
+                    if [[ ! "$CONTINUE_ANYWAY" =~ ^[Yy]$ ]]; then
+                        echo -e "   ${INFO}Please choose another path.${RESET}"
+                        continue
+                    fi
+                fi
+                break
+            else
+                PARENT_DIR=$(dirname "$TARGET_DIR")
+                if [ -d "$PARENT_DIR" ]; then
+                    PARENT_STATS=$(df -k "$PARENT_DIR" | tail -1)
+                    PARENT_AVAIL_KB=$(echo "$PARENT_STATS" | awk '{print $4}')
+                    PARENT_AVAIL_BYTES=$((PARENT_AVAIL_KB * 1024))
+                    echo -e "   ${INFO}Free space on $PARENT_DIR: ${WARNING}$(bytes_to_human $PARENT_AVAIL_BYTES)${RESET}"
+                    if [ $PARENT_AVAIL_BYTES -lt $ESTIMATED_STORAGE ]; then
+                        echo -e "   ${WARNING}⚠️  Warning: Low free space on parent directory!${RESET}"
+                        ask_yn CONTINUE_ANYWAY "Continue anyway? (y/n): "
+                        if [[ ! "$CONTINUE_ANYWAY" =~ ^[Yy]$ ]]; then
+                            echo -e "   ${INFO}Please choose another path.${RESET}"
+                            continue
+                        fi
+                    fi
+                fi
+                break
+            fi
+        done
     fi
 
     # Handle existing directory
@@ -4791,7 +4962,7 @@ main_deployment() {
                 docker compose down -v --remove-orphans 2>/dev/null || true
                 # Clean up any remaining containers (including all possible bridges)
                 docker rm -f synapse synapse-db element-admin synapse-admin matrix-auth livekit livekit-jwt element-call sliding-sync matrix-media-repo \
-                    matrix-bridge-discord matrix-bridge-telegram matrix-bridge-whatsapp matrix-bridge-signal matrix-bridge-slack matrix-bridge-instagram 2>/dev/null || true
+                    matrix-bridge-discord matrix-bridge-telegram matrix-bridge-whatsapp matrix-bridge-signal matrix-bridge-slack matrix-bridge-meta 2>/dev/null || true
                 # Clean up network
                 docker network rm matrix-net 2>/dev/null || true
             fi
@@ -4953,7 +5124,7 @@ helpline=white,black
                 "whatsapp"  "WhatsApp  — Connect to WhatsApp (requires phone)"  OFF \
                 "signal"    "Signal    — Connect to Signal (requires phone)"    OFF \
                 "slack"     "Slack     — Connect to Slack workspaces"           OFF \
-                "instagram" "Instagram — Connect to Instagram DMs"              OFF \
+                "meta"      "Meta      — Connect to Facebook Messenger / Instagram" OFF \
                 3>&1 1>&2 2>&3)
             local BRIDGE_EXIT=$?
             unset NEWT_COLORS
@@ -5109,15 +5280,22 @@ esac
 
     # Admin user configuration
     echo ""
-    echo -ne "Admin Username [admin]: ${WARNING}"
-    read -r ADMIN_USER
-    if [ -z "$ADMIN_USER" ]; then
-        ADMIN_USER="admin"
-        echo -ne "\033[1A\033[K"
-        echo -e "${RESET}Admin Username [admin]: ${WARNING}${ADMIN_USER}${RESET}"
-    else
-        echo -ne "${RESET}"
-    fi
+    echo -e "   ${WARNING}⚠️  Username must be lowercase only (a-z and numbers, no uppercase or spaces).${RESET}"
+    while true; do
+        echo -ne "Admin Username [admin]: ${WARNING}"
+        read -r ADMIN_USER
+        if [ -z "$ADMIN_USER" ]; then
+            ADMIN_USER="admin"
+            echo -ne "\033[1A\033[K"
+            echo -e "${RESET}Admin Username [admin]: ${WARNING}${ADMIN_USER}${RESET}"
+            break
+        elif [[ "$ADMIN_USER" =~ [A-Z] ]]; then
+            echo -e "${RESET}   ${ERROR}Username must not contain uppercase letters. Try again.${RESET}"
+        else
+            echo -ne "${RESET}"
+            break
+        fi
+    done
 
     # Admin password configuration
     echo -e "\n${ACCENT}Admin Password:${RESET}"
@@ -5803,8 +5981,8 @@ while true; do
     echo -e "   ${INFO}3)${RESET} ${SUCCESS}Uninstall${RESET} — Remove the Matrix stack and all data"
     echo -e "   ${INFO}4)${RESET} ${SUCCESS}Verify${RESET}    — Check integrity of an existing installation"
     echo -e "   ${INFO}5)${RESET} ${SUCCESS}Bridges${RESET}   — Add or manage bridges to existing installation"
-    echo -e "   ${INFO}6)${RESET} ${CODE}Changelog${RESET} — View latest version changelog"
-    echo -e "   ${INFO}7)${RESET} ${WARNING}Logs${RESET}      — View container logs for troubleshooting"
+    echo -e "   ${INFO}6)${RESET} ${WARNING}Logs${RESET}      — View container logs for troubleshooting"
+    echo -e "   ${INFO}7)${RESET} ${CODE}Changelog${RESET} — View latest version changelog"
     echo -e ""
     echo -e "   ${INFO}0)${RESET} ${ERROR}Exit${RESET}"
     echo -e ""
@@ -5853,13 +6031,13 @@ while true; do
             draw_header
             ;;
         6)
-            show_changelog
+            run_logs
             draw_header
             ;;
         7)
-            run_logs
+            show_changelog
             draw_header
-            ;;    
+            ;;
     esac
 done
 
