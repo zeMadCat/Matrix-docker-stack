@@ -9,6 +9,17 @@
 > **Changelog**
 >
 > <details open>
+> <summary><strong>v1.6</strong> — 2026-03-03</summary>
+>
+> - **Element X support** — `msc4186_enabled: true` added; Element X now works
+> - **Caddy/Traefik guides** — step-by-step setup guides for existing installs
+> - **Caddy fix** — premature reload removed; config applies correctly on start
+> - **Arch Linux fixes** — IP detection and `daemon.json` write fixed
+> - **LiveKit JWT port** — changed to `8089` to avoid Traefik conflict
+>
+> </details>
+>
+> <details>
 > <summary><strong>v1.5</strong> — 2026-03-03</summary>
 >
 > - **Pangolin reverse proxy support** — new proxy option using Newt tunnel; zero open ports on home server, coturn runs on a separate VPS, guided setup included
@@ -136,7 +147,7 @@ The script checks GitHub for a newer version before showing the menu. If one is 
 │                      │  • Multi-Screenshare                  │
 │                      │                                       │
 ├──────────────────────────────────────────────────────────────┤
-│                    Script Version: v1.5                      │
+│                    Script Version: v1.6                      │
 └──────────────────────────────────────────────────────────────┘
 
  What would you like to do?
@@ -305,7 +316,7 @@ Run the script again and select option 3. It detects all containers, volumes, ne
 - `turn.yourdomain.com` must always be **DNS Only** — TURN is handled by LiveKit's built-in server (or coturn on a VPS when using Pangolin)
 - Admin panel is optional — choose Element Admin (modern) or Synapse Admin (classic), or skip entirely
 - The credentials file includes all URLs, config paths, secrets, and bridge activation steps
-- Use Element (not Element X) on iOS/Android
+- Use Element or Element X on iOS/Android
 
 ---
 

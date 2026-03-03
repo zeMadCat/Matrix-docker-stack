@@ -44,7 +44,7 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.5"
+SCRIPT_VERSION="1.6"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
@@ -633,7 +633,7 @@ draw_footer() {
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "TURN TLS" "TCP" "5349" "$AUTO_LOCAL_IP:5349"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit HTTP" "TCP" "7880" "$AUTO_LOCAL_IP:7880"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit RTC" "UDP" "7882" "$AUTO_LOCAL_IP:7882"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit JWT" "TCP" "8080" "$AUTO_LOCAL_IP:8080"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit JWT" "TCP" "8089" "$AUTO_LOCAL_IP:8089"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit Range" "UDP" "50000-50050" "$AUTO_LOCAL_IP"
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Call" "TCP" "8007" "$AUTO_LOCAL_IP:8007"
@@ -1052,6 +1052,7 @@ CRONEOF
         echo -e "   ${INFO}ℹ  Daily log rotation scheduled via cron${RESET}"
         
         # Configure Docker daemon for better log handling
+        mkdir -p /etc/docker
         if [ -f /etc/docker/daemon.json ]; then
             cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
         fi
@@ -1953,7 +1954,7 @@ services:
       - LIVEKIT_KEY=REPLACE_LK_API_KEY
       - LIVEKIT_SECRET=REPLACE_LK_API_SECRET
       - LIVEKIT_JWT_BIND=:8080
-    ports: [ "8080:8080" ]
+    ports: [ "8089:8080" ]
     depends_on: [ livekit ]
     networks: [ matrix-net ]
     labels:
@@ -2348,6 +2349,10 @@ enable_metrics: false
 # MAS INTEGRATION - Matrix Authentication Service                              #
 ################################################################################
 
+# Experimental Features
+experimental_features:
+  msc4186_enabled: true  # Simplified Sliding Sync (Element X support)
+
 # Matrix Authentication Service (replaces deprecated experimental_features.msc3861)
 matrix_authentication_service:
   enabled: true
@@ -2563,25 +2568,7 @@ $SUB_LIVEKIT.$DOMAIN {
 $EXTRA_BLOCKS
 CADDYEOF
 
-    echo -e "   ${SUCCESS}✓ Caddyfile written${RESET}"
-
-    # Wait for Caddy to start and reload
-    echo -ne "   ${INFO}Waiting for Caddy to start${RESET}"
-    local TRIES=0
-    until curl -fsS -o /dev/null "http://localhost:2019/config/" 2>/dev/null || [ $TRIES -ge 30 ]; do
-        echo -ne "."
-        sleep 3
-        ((TRIES++))
-    done
-    echo ""
-
-    if [ $TRIES -ge 30 ]; then
-        echo -e "   ${WARNING}⚠️  Caddy admin API not responding. Reload manually: docker exec caddy caddy reload --config /etc/caddy/Caddyfile${RESET}"
-    else
-        docker exec caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && \
-            echo -e "   ${SUCCESS}✓ Caddy config reloaded — HTTPS certificates will be requested automatically${RESET}" || \
-            echo -e "   ${INFO}ℹ  Caddy will apply config on next restart${RESET}"
-    fi
+    echo -e "   ${SUCCESS}✓ Caddyfile written — Caddy will load it on startup${RESET}"
 }
 
 # Write Traefik config files
@@ -4683,51 +4670,28 @@ main_deployment() {
     elif command -v wget >/dev/null 2>&1; then
         RAW_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me/ip 2>/dev/null)
     fi
-
-    while true; do
-        DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-        DETECTED_LOCAL=$(hostname -I | awk '{print $1}')
-
-        echo -e "\n   ${INFO}Detected IP addresses:${RESET}"
-        echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
-        echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
-        echo ""
-
-        ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
-
-        if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
-            AUTO_PUBLIC_IP=$DETECTED_PUBLIC
-            AUTO_LOCAL_IP=$DETECTED_LOCAL
-            break
-        elif [[ "$IP_CONFIRM" =~ ^[Nn]$ ]]; then
-            echo -e "\n   ${INFO}Enter IP addresses manually (or type 'back' to return to IP selection):${RESET}\n"
-
-            echo -ne "   Enter Public IP [${DETECTED_PUBLIC:-required}]: ${WARNING}"
-            read -r AUTO_PUBLIC_IP
-            echo -e "${RESET}"
-
-            if [[ "$AUTO_PUBLIC_IP" == "back" ]] || [[ "$AUTO_PUBLIC_IP" == "b" ]]; then
-                echo -e "   ${INFO}Returning to IP selection...${RESET}"
-                continue
-            fi
-
-            echo -ne "   Enter Local IP [${DETECTED_LOCAL:-required}]: ${WARNING}"
-            read -r AUTO_LOCAL_IP
-            echo -e "${RESET}"
-
-            if [[ "$AUTO_LOCAL_IP" == "back" ]] || [[ "$AUTO_LOCAL_IP" == "b" ]]; then
-                echo -e "   ${INFO}Returning to IP selection...${RESET}"
-                continue
-            fi
-
-            if [ -z "$AUTO_PUBLIC_IP" ] || [ -z "$AUTO_LOCAL_IP" ]; then
-                echo -e "   ${ERROR}Both Public and Local IPs are required. Please try again.${RESET}"
-                continue
-            fi
-
-            break
-        fi
-    done
+    
+    DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+    DETECTED_LOCAL=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)
+    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+    
+    echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
+    echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
+    
+    ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
+    
+    if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
+        AUTO_PUBLIC_IP=$DETECTED_PUBLIC
+        AUTO_LOCAL_IP=$DETECTED_LOCAL
+    else
+        echo -ne "Enter Public IP: ${WARNING}"
+        read -r AUTO_PUBLIC_IP
+        echo -e "${RESET}"
+        echo -ne "Enter Local IP: ${WARNING}"
+        read -r AUTO_LOCAL_IP
+        echo -e "${RESET}"
+    fi
 
     ############################################################################
     # STEP 4: Smart Conflict Detection & Cleanup                              #

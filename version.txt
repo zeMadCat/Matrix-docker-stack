@@ -2,6 +2,17 @@ Matrix Synapse Full Stack Deployer — Changelog
 by MadCat
 ================================================================================
 
+v1.6 (2026-03-03)
+─────────────────
+  - Added msc4186_enabled: true to homeserver.yaml — enables native Simplified Sliding Sync for Element X.
+  - Caddy/Traefik guided setup: paginated step-by-step guides added for existing proxy installs.
+  - Caddy auto-install fix: removed premature reload from caddy_autosetup() — config applies on first start.
+  - Arch Linux fix: local IP detection now uses ip route with fallbacks; mkdir -p /etc/docker added before daemon.json write.
+  - LiveKit JWT port changed from 8080 to 8089 to avoid conflict with Traefik dashboard.
+  - Removed "not Element X" note — both Element and Element X are supported.
+
+================================================================================
+
 v1.5 (2026-03-03)
 ─────────────────
 Pangolin Reverse Proxy Support:
