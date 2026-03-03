@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/mds.png" alt="Matrix Docker Stack" style="width: min(450px, 100%)"/>
+  <img src="images/mds.png" alt="Matrix Docker Stack" style="width: min(450px, 100%)"/>
   <p><em>Vibecoded — built for personal use, shared because it works.</em></p>
   <p>A single interactive bash script that deploys a full Matrix homeserver stack on any Linux machine with Docker.</p>
 </div>
