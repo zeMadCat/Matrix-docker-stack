@@ -2,44 +2,86 @@ Matrix Synapse Full Stack Deployer — Changelog
 by MadCat
 ================================================================================
 
+v1.5 (2026-03-03)
+─────────────────
+Pangolin Reverse Proxy Support:
+  - Added Pangolin as proxy option 5 (Manual moved to 6).
+  - Collects Pangolin dashboard URL, Newt Tunnel ID, Newt Secret, VPS public IP.
+  - Adds newt container (fosrl/newt:latest) to compose.yaml with tunnel credentials.
+  - LiveKit TURN points to VPS IP instead of turn.$DOMAIN when Pangolin selected.
+  - show_pangolin_guide() function: 3-step guide with tunnel config table,
+    coturn VPS compose.yaml (reuses LiveKit secret), DNS records table.
+  - DNS status table: services show "PANGOLIN", TURN shows "VPS IP".
+  - Port forwarding table replaced with "no open ports required" message.
+  - Footer, credentials file, and well-known hints updated for Pangolin.
+  - nginx well-known setup skipped for Pangolin (not needed).
+
+Network Detection Revamp:
+  - Full re-detect loop: saying n now offers manual entry with detected IPs
+    shown as defaults in brackets.
+  - Typing back or b in manual entry returns to the detection screen.
+  - Validates both IPs are filled before continuing; loops back with error
+    if either is empty.
+  - Simplified to y/n only (no cancel option).
+
+Storage Check (before deployment path selection):
+  - Added get_free_gb(), get_total_gb(), get_used_pct() helper functions.
+  - Shows estimated storage needed (~5GB base, ~7GB with bridges).
+  - Displays root filesystem: Total / Free / Used%.
+  - Warns if free space is below the estimated requirement.
+  - Deployment path options show free GB inline per option.
+  - Custom path entry shows free space at the entered location.
+  - _path_free_gb() helper walks upward to nearest existing parent dir.
+
+NPM Base Domain Config Updated:
+  - Well-known now served inline via NPM location blocks (no nginx dependency,
+    no Synapse serve_server_wellknown required, no Cloudflare stripping issues).
+  - Added /_matrix/client/ block with proxy_hide_header + CORS re-add
+    (required for auth_metadata and OIDC discovery by Element Admin).
+  - Added /_synapse/ess/ block (required for Element Admin version check).
+  - Root location / now redirects to Element Web.
+  - Removed CORS strip headers from base domain (only belong on matrix subdomain).
+  - Added NOTE about Origin server certificate requirement for base domain.
+
+MAS Config Fix:
+  - homeserver: was incorrectly set to "$DOMAIN" instead of "$SERVER_NAME".
+    This broke Element Admin auth when the Matrix server name differs from
+    the base domain (e.g. matrix.example.com vs example.com).
+
+Matrix Homeserver NPM Config Fix:
+  - Added missing /_synapse/admin/ location block (required for Element Admin
+    dashboard — rooms, users, server info).
+
+Version Detection Logic:
+  - compare_versions() and API result stripping now handle both v and V tag
+    prefixes (sed 's/^[Vv]//' and ${1#[Vv]}).
+  - GitHub API result validated before use; falls back to version.txt if
+    API returns invalid or empty response.
+  - Fallback extracts highest version number from version.txt via sort -V.
+  - Shows "Local: vX.X | Remote: vX.X" comparison line before result.
+  - Unverified version warning redesigned with centered colored text.
+
+Cosmetic Improvements:
+  - Banner redesigned: two-column layout (CORE / BRIDGES + FEATURES),
+    version number shown inside the banner box.
+  - Script comment block expanded with Optional Components, Bridges,
+    and Features sections.
+
+================================================================================
+
 v1.4 (2026-03-02)
 ─────────────────
-Cross-distro compatibility (Arch Linux):
-  - Fixed local IP detection: `hostname -I` is not available on Arch Linux
-    (inetutils ships a different hostname binary without the -I flag).
-    Now uses `ip route get 1` as primary method to extract the src address,
-    falling back to `hostname -I` if the result is empty. Works correctly
-    on Arch, Ubuntu, Debian, and any distro with iproute2.
-  - Fixed Docker log rotation: `mkdir -p /etc/docker` now runs before writing
-    daemon.json. On fresh Arch installs the /etc/docker directory does not
-    exist yet, causing "No such file or directory" error and silently skipping
-    log rotation configuration.
+Storage Check:
+  - Added disk space check before deployment path selection.
+  - Shows estimated storage needs and free space per path option.
+  - Warns if available space is below estimated requirement.
 
-MAS (Matrix Authentication Service):
-  - Fixed matrix.homeserver: was hardcoded to $DOMAIN, now correctly uses
-    $SERVER_NAME. Previously, choosing `matrix.example.com` as server name
-    during setup would result in user IDs of `@user:example.com` instead of
-    the expected `@user:matrix.example.com`. Both server name options now
-    work as fully independent choices with consistent user ID assignment
-    across MAS, Synapse, Element Web, Element Call, and Element Admin.
+Version Check Improvements:
+  - Improved GitHub API version parsing.
+  - Better fallback handling when releases API is unavailable.
 
-NPM Proxy Guide:
-  - Base domain and matrix homeserver advanced tab configs now include a
-    global CORS preflight handler block (`if ($request_method = OPTIONS)`)
-    placed before all location blocks. Without this, OPTIONS preflight
-    requests from browsers hit nginx before any location match and return
-    no Access-Control-Allow-Origin header, causing CORS failures in
-    Element Admin and other clients.
-  - Complete location block set now documented for both proxy hosts:
-    MAS login/logout/refresh routing, /_synapse/admin/ (base domain only),
-    /_synapse/client/, and /_matrix/ with WebSocket upgrade support.
-  - proxy_hide_header directives for Synapse's own CORS headers documented
-    to prevent duplicate header conflicts.
+================================================================================
 
-Element Admin:
-  - SERVER_NAME environment variable confirmed correct: bare domain only
-    (e.g. `example.com`), not a full URL. Full URL caused Element Admin
-    to fail client registration against MAS on startup.
 
 v1.3 (2026-03-01)
 ─────────────────

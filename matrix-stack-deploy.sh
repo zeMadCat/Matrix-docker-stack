@@ -3,23 +3,40 @@
 ################################################################################
 #                                                                              #
 #                    MATRIX SYNAPSE FULL STACK DEPLOYER                        #
-#                              Version 1.4                                     #
-#                           by MadCat (Production)                             #
+#                                by MadCat                                     #
 #                                                                              #
 #  A comprehensive deployment script for Matrix Synapse with working           #
 #  multi-screenshare video calling capabilities.                               #
 #                                                                              #
-#  Components:                                                                 #
+#  Core Components:                                                            #
 #  • Synapse (Matrix Homeserver)                                               #
 #  • MAS (Matrix Authentication Service)                                       #
 #  • PostgreSQL (Database)                                                     #
-#  • LiveKit SFU (unlimited multi-screenshare + built-in TURN/STUN)           #
+#  • LiveKit SFU (unlimited multi-screenshare + built-in TURN/STUN)            #
 #  • LiveKit JWT Service (token generation)                                    #
-#  • Element Web (web client)                                                  #
-#  • Element Call (standalone WebRTC UI — optional)                            #
-#  • Element Admin or Synapse Admin (admin panel — optional, user choice)      #
 #                                                                              #
-#  iOS/Android: Use Element app (not Element X)                                #
+#  Optional Components:                                                        #
+#  • Element Web (web client)                                                  #
+#  • Element Call (standalone WebRTC UI)                                       #
+#  • Element Admin or Synapse Admin (admin panel)                              #
+#  • Sliding Sync (modern client support)                                      #
+#  • Matrix Media Repo (advanced media handling)                               #
+#                                                                              #
+#  Bridges Available:                                                          #
+#  • Discord • Telegram • WhatsApp • Signal • Slack • Instagram                #
+#                                                                              #
+#  Features:                                                                   #
+#  • Reverse Proxy guides (NPM, Caddy, Traefik, Cloudflare, Pangolin)          #
+#  • Pangolin VPS auto-configuration with SSH/SCP                              #
+#  • Dynamic user input based setup with cancel options                        #
+#  • Storage estimation and disk space checking                                #
+#  • Unlimited multi-screenshare video calls                                   #
+#  • GitHub version checking with update notifications                         #
+#  • Complete uninstall with resource scanning (containers, volumes, networks) #
+#  • Log rotation configuration for Docker containers                          #
+#  • Health checks for all services post-deployment                            #
+#  • Dockge stack integration support                                          #
+#  • Bridge auto-configuration with database creation                          #
 #                                                                              #
 ################################################################################
 
@@ -27,7 +44,7 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.4"
+SCRIPT_VERSION="1.5"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
@@ -150,20 +167,26 @@ draw_header() {
     clear
     echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BANNER}│              MATRIX SYNAPSE FULL STACK DEPLOYER              │${RESET}"
-    echo -e "${BANNER}│                          by MadCat                           │${RESET}"
-    echo -e "${BANNER}│                                                              │${RESET}"
-    echo -e "${BANNER}│                    Included Components:                      │${RESET}"
-    echo -e "${BANNER}│   Synapse • MAS • LiveKit • LiveKit JWT • PostgreSQL • Sync  │${RESET}"
-    echo -e "${BANNER}│        Element Call • Admin Panel • Bridges (optional)       │${RESET}"
-    echo -e "${BANNER}│                                                              │${RESET}"
-    echo -e "${BANNER}│       Bridges: Discord • Telegram • WhatsApp • Signal        │${RESET}"
-    echo -e "${BANNER}│                    Slack • Instagram                         │${RESET}"
-    echo -e "${BANNER}│                                                              │${RESET}"
-    echo -e "${BANNER}│           Dynamic • Multi-Screenshare • Easy Setup           │${RESET}"
+    echo -e "${BANNER}│                         by MadCat                            │${RESET}"
+    echo -e "${BANNER}├──────────────────────────────────────────────────────────────┤${RESET}"
+    echo -e "${BANNER}│  CORE                │  BRIDGES                              │${RESET}"
+    echo -e "${BANNER}│  ───────────         │  ───────────                          │${RESET}"
+    echo -e "${BANNER}│  • Synapse           │  - Discord     - Telegram             │${RESET}"
+    echo -e "${BANNER}│  • MAS               │  - WhatsApp    - Signal               │${RESET}"
+    echo -e "${BANNER}│  • LiveKit           │  - Slack       - Instagram            │${RESET}"
+    echo -e "${BANNER}│  • LiveKit JWT       │                                       │${RESET}"
+    echo -e "${BANNER}│  • PostgreSQL        │  FEATURES                             │${RESET}"
+    echo -e "${BANNER}│  • Element Call *    │  ───────────                          │${RESET}"
+    echo -e "${BANNER}│  • Admin Panel *     │  • Dynamic Config                     │${RESET}"
+    echo -e "${BANNER}│  • Sliding Sync *    │  • User Input Based                   │${RESET}"
+    echo -e "${BANNER}│  • Media Repo *      │  • Reverse Proxy Guides               │${RESET}"
+    echo -e "${BANNER}│                      │  • Pangolin VPS Support               │${RESET}"
+    echo -e "${BANNER}│  * = optional        │  • Easy Setup                         │${RESET}"
+    echo -e "${BANNER}│                      │  • Multi-Screenshare                  │${RESET}"
+    echo -e "${BANNER}│                      │                                       │${RESET}"
+    echo -e "${BANNER}├──────────────────────────────────────────────────────────────┤${RESET}"
+    echo -e "${BANNER}│                    ${WARNING}Script Version:${SUCCESS} v${SCRIPT_VERSION}${RESET}${BANNER}                      │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
-    
-    # Show version info only
-    echo -e "\n${INFO}Script Version: ${SUCCESS}v${SCRIPT_VERSION}${RESET}"
     echo ""
 }
 
@@ -259,6 +282,12 @@ save_credentials_prompt() {
     echo "   MAS Secret:       $MAS_SECRET"
     echo "   Livekit API Key:  $LK_API_KEY"
     echo "   Livekit Secret:   $LK_API_SECRET"
+    if [[ "$PROXY_TYPE" == "pangolin" ]]; then
+        echo "   Pangolin URL:     $PANGOLIN_URL"
+        echo "   Newt ID:          $PANGOLIN_NEWT_ID"
+        echo "   Newt Secret:      $PANGOLIN_NEWT_SECRET"
+        echo "   VPS IP (TURN):    $PANGOLIN_VPS_IP"
+    fi
     if [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "npm" && -n "$NPM_ADMIN_PASS" ]]; then
         echo "   NPM Web UI:       http://$AUTO_LOCAL_IP:81"
         echo "   NPM Email:        $NPM_ADMIN_EMAIL"
@@ -415,6 +444,13 @@ draw_footer() {
     echo -e "   ${INFO}   Use the CLI commands above regardless of registration setting.${RESET}"
     if [[ "$PROXY_ALREADY_RUNNING" == "false" ]]; then
         case "$PROXY_TYPE" in
+            pangolin)
+                echo -e "\n${ACCENT}═══════════════════════ PANGOLIN TUNNEL ════════════════════════${RESET}"
+                echo -e "   ${ACCESS_NAME}Pangolin URL:${RESET}        ${ACCESS_VALUE}${PANGOLIN_URL}${RESET}"
+                echo -e "   ${ACCESS_NAME}Newt ID:${RESET}             ${ACCESS_VALUE}${PANGOLIN_NEWT_ID}${RESET}"
+                echo -e "   ${ACCESS_NAME}VPS IP (TURN):${RESET}       ${ACCESS_VALUE}${PANGOLIN_VPS_IP}${RESET}"
+                echo -e "   ${INFO}ℹ  Newt container is running in your stack — no open ports required${RESET}"
+                ;;
             npm)
                 if [[ -n "$NPM_ADMIN_PASS" ]]; then
                     echo -e "\n${ACCENT}═══════════════════════ NPM ADMIN PANEL ════════════════════════${RESET}"
@@ -452,7 +488,14 @@ draw_footer() {
 
     # DNS records table
     echo -e "\n${ACCENT}═════════════════════════ DNS RECORDS ═══════════════════════════${RESET}"
-    if [[ "$PROXY_TYPE" == "cloudflare" ]]; then
+    if [[ "$PROXY_TYPE" == "pangolin" ]]; then
+        MATRIX_STATUS="PANGOLIN"
+        MAS_STATUS="PANGOLIN"
+        LIVEKIT_STATUS="PANGOLIN"
+        TURN_STATUS="VPS IP"
+        ELEMENT_CALL_STATUS="PANGOLIN"
+        ELEMENT_ADMIN_STATUS="PANGOLIN"
+    elif [[ "$PROXY_TYPE" == "cloudflare" ]]; then
         MATRIX_STATUS="DNS ONLY"
         MAS_STATUS="DNS ONLY"
         LIVEKIT_STATUS="DNS ONLY"
@@ -558,6 +601,10 @@ draw_footer() {
 
     # Port forwarding table
     echo -e "\n${ACCENT}════════════════════════ PORT FORWARDING ═════════════════════════${RESET}"
+    if [[ "$PROXY_TYPE" == "pangolin" ]]; then
+        echo -e "   ${SUCCESS}✓ No port forwarding required — Newt tunnel handles all inbound traffic${RESET}"
+        echo -e "   ${INFO}ℹ  Only the VPS needs ports open: UDP/TCP 3478 and TCP 5349 for TURN (coturn)${RESET}"
+    else
     echo -e "   ┌─────────────────┬───────────┬─────────────────┬───────────────────────┐"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ %-21s │\n" "SERVICE" "PROTOCOL" "PORT" "FORWARD TO"
     echo -e "   ├─────────────────┼───────────┼─────────────────┼───────────────────────┤"
@@ -592,6 +639,7 @@ draw_footer() {
         printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Call" "TCP" "8007" "$AUTO_LOCAL_IP:8007"
     fi
     echo -e "   └─────────────────┴───────────┴─────────────────┴───────────────────────┘"
+    fi # end pangolin else block
 
     # Configuration files section
     echo -e "\n${ACCENT}═══════════════════════ CONFIGURATION FILES ═══════════════════════${RESET}"
@@ -758,8 +806,8 @@ draw_footer() {
 # Compare semantic versions (e.g., "1.1" vs "1.0")
 # Returns: 0 if equal, 1 if $1 > $2, 2 if $1 < $2
 compare_versions() {
-    local ver1=${1#v}
-    local ver2=${2#v}
+    local ver1=${1#[Vv]}
+    local ver2=${2#[Vv]}
     
     IFS='.' read -ra V1 <<< "$ver1"
     IFS='.' read -ra V2 <<< "$ver2"
@@ -786,18 +834,40 @@ check_for_updates() {
         return 1
     fi
     
-    LATEST_VERSION=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
+    # Try GitHub API first (primary source)
+    echo -e "   ${INFO}Checking GitHub API for latest release...${RESET}"
+    LATEST_VERSION=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^[Vv]//')
     
-    # Fallback to version.txt if releases API fails
-    if [ -z "$LATEST_VERSION" ] || [[ "$LATEST_VERSION" == *"404"* ]] || [[ "$LATEST_VERSION" == *"Not Found"* ]]; then
-        LATEST_VERSION=$(curl -sL "https://raw.githubusercontent.com/$GITHUB_REPO/$GITHUB_BRANCH/version.txt" 2>/dev/null | tr -d '[:space:]' | sed 's/v//')
+    # Validate API result
+    if [ -n "$LATEST_VERSION" ] && [[ "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+ ]]; then
+        echo -e "   ${SUCCESS}✓ Found release v${LATEST_VERSION} on GitHub${RESET}"
+    else
+        echo -e "   ${WARNING}⚠️  GitHub API failed, trying version.txt...${RESET}"
+        
+        # Robust fallback: extract ALL version numbers from version.txt and find the highest
+        LATEST_VERSION=$(curl -sL "https://raw.githubusercontent.com/$GITHUB_REPO/$GITHUB_BRANCH/version.txt" 2>/dev/null | \
+            grep -oE 'v[0-9]+\.[0-9]+' | \
+            sed 's/^[Vv]//' | \
+            sort -V | \
+            tail -1)
+        
+        if [ -n "$LATEST_VERSION" ]; then
+            echo -e "   ${SUCCESS}✓ Found highest version v${LATEST_VERSION} in version.txt${RESET}"
+        else
+            echo -e "   ${WARNING}⚠️  Could not determine latest version from GitHub${RESET}"
+            echo -e "   ${INFO}   Continuing with local version v${SCRIPT_VERSION}${RESET}"
+            return 0
+        fi
     fi
     
     # Validate version format (should be numbers and dots only)
     if [ -z "$LATEST_VERSION" ] || ! [[ "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+ ]]; then
-        echo -e "   ${WARNING}Could not check for updates. Continuing with current version.${RESET}"
+        echo -e "   ${WARNING}⚠️  Invalid version format received${RESET}"
+        echo -e "   ${INFO}   Continuing with local version v${SCRIPT_VERSION}${RESET}"
         return 1
     fi
+    
+    echo -e "   ${INFO}Local: v${SCRIPT_VERSION} | Remote: v${LATEST_VERSION}${RESET}"
     
     # Use semantic version comparison
     compare_versions "$SCRIPT_VERSION" "$LATEST_VERSION"
@@ -842,15 +912,43 @@ check_for_updates() {
         fi
     elif [[ $result -eq 0 ]]; then
         echo -e "   ${SUCCESS}✓ You're running the latest version (v${SCRIPT_VERSION})!${RESET}"
-    else
+        else
         # Current version is NEWER than GitHub — unknown/unofficial build
         echo -e ""
         echo -e "${ERROR}╔══════════════════════════════════════════════════════════════╗${RESET}"
-        echo -e "${ERROR}║              ⚠️  UNVERIFIED SCRIPT VERSION                   ║${RESET}"
+        echo -e "${ERROR}║          ⚠️⚠️⚠️   UNVERIFIED SCRIPT VERSION   ⚠️⚠️⚠️               ║${RESET}"
         echo -e "${ERROR}╚══════════════════════════════════════════════════════════════╝${RESET}"
         echo -e ""
-        echo -e "   ${WARNING}This script is version ${ERROR}v${SCRIPT_VERSION}${WARNING}, but the latest official${RESET}"
-        echo -e "   ${WARNING}release on GitHub is ${SUCCESS}v${LATEST_VERSION}${WARNING}.${RESET}"
+        
+        # Center the warning messages with colored version numbers
+        local line1_prefix="!!! This script is version "
+        local line1_version="v${SCRIPT_VERSION}"
+        local line1_suffix=" !!!"
+        local line1="${line1_prefix}${line1_version}${line1_suffix}"
+        
+        local line2_prefix="But the latest official release on GitHub is "
+        local line2_version="v${LATEST_VERSION}"
+        local line2_suffix="."
+        local line2="${line2_prefix}${line2_version}${line2_suffix}"
+        
+        # Calculate padding for line1 based on total text length without colors
+        local line1_length=${#line1}
+        local line1_padding=$(( (60 - line1_length) / 2 ))
+        printf "%*s${WARNING}%s${ERROR}%s${WARNING}%s${RESET}\n" \
+            $line1_padding "" \
+            "${line1_prefix}" \
+            "${line1_version}" \
+            "${line1_suffix}"
+        
+        # Calculate padding for line2 based on total text length without colors
+        local line2_length=${#line2}
+        local line2_padding=$(( (60 - line2_length) / 2 ))
+        printf "%*s${WARNING}%s${SUCCESS}%s${WARNING}%s${RESET}\n" \
+            $line2_padding "" \
+            "${line2_prefix}" \
+            "${line2_version}" \
+            "${line2_suffix}"
+        
         echo -e ""
         echo -e "   ${WARNING}You may be running a modified or unofficial version.${RESET}"
         echo -e "   ${WARNING}Only run scripts obtained directly from the official repo:${RESET}"
@@ -958,7 +1056,6 @@ CRONEOF
             cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
         fi
         
-        mkdir -p /etc/docker
         cat > /etc/docker/daemon.json << 'DOCKERDAEMONEOF'
 {
   "log-driver": "json-file",
@@ -1026,9 +1123,14 @@ LIVEKITEOF
     # Replace placeholders
     sed -i "s/REPLACE_LK_API_KEY/$LK_API_KEY/g" "$TARGET_DIR/livekit/livekit.yaml"
     sed -i "s/REPLACE_LK_API_SECRET/$LK_API_SECRET/g" "$TARGET_DIR/livekit/livekit.yaml"
-    sed -i "s/REPLACE_TURN_DOMAIN/turn.$DOMAIN/g" "$TARGET_DIR/livekit/livekit.yaml"
-    
-    echo -e "   ${SUCCESS}✓ LiveKit config created - unlimited screenshares + built-in TURN/STUN enabled${RESET}"
+    if [[ "$PROXY_TYPE" == "pangolin" ]]; then
+        # Pangolin: TURN runs on the VPS, use its IP directly
+        sed -i "s/REPLACE_TURN_DOMAIN/$PANGOLIN_VPS_IP/g" "$TARGET_DIR/livekit/livekit.yaml"
+        echo -e "   ${SUCCESS}✓ LiveKit config created — TURN pointed to VPS at $PANGOLIN_VPS_IP${RESET}"
+    else
+        sed -i "s/REPLACE_TURN_DOMAIN/turn.$DOMAIN/g" "$TARGET_DIR/livekit/livekit.yaml"
+        echo -e "   ${SUCCESS}✓ LiveKit config created - unlimited screenshares + built-in TURN/STUN enabled${RESET}"
+    fi
 }
 
 # Generate Element Call configuration
@@ -1379,10 +1481,11 @@ setup_nginx_wellknown() {
     if ! command -v nginx &>/dev/null; then
         echo -e "   ${WARNING}⚠️  nginx not found on this machine - skipping${RESET}"
         case "$PROXY_TYPE" in
-            npm)    echo -e "   ${INFO}ℹ  Serve well-known via the NPM Advanced Tab config in the setup guide below.${RESET}" ;;
-            caddy)  echo -e "   ${INFO}ℹ  Serve well-known via the Caddyfile config in the setup guide below.${RESET}" ;;
-            traefik)echo -e "   ${INFO}ℹ  Serve well-known via the Traefik config in the setup guide below.${RESET}" ;;
-            *)      echo -e "   ${INFO}ℹ  Ensure your reverse proxy serves $TARGET_DIR/well-known/ at https://$DOMAIN/.well-known/matrix/${RESET}" ;;
+            npm)      echo -e "   ${INFO}ℹ  Serve well-known via the NPM Advanced Tab config in the setup guide below.${RESET}" ;;
+            caddy)    echo -e "   ${INFO}ℹ  Serve well-known via the Caddyfile config in the setup guide below.${RESET}" ;;
+            traefik)  echo -e "   ${INFO}ℹ  Serve well-known via the Traefik config in the setup guide below.${RESET}" ;;
+            pangolin) echo -e "   ${INFO}ℹ  Configure the base domain tunnel in Pangolin to serve well-known via the guide below.${RESET}" ;;
+            *)        echo -e "   ${INFO}ℹ  Ensure your reverse proxy serves $TARGET_DIR/well-known/ at https://$DOMAIN/.well-known/matrix/${RESET}" ;;
         esac
         return
     fi
@@ -1465,6 +1568,10 @@ EOF
             ;;
         traefik)
             echo -e "   ${INFO}   These are already included in the Traefik dynamic config shown in the setup guide below.${RESET}"
+            ;;
+        pangolin)
+            echo -e "   ${INFO}   Configure Pangolin to route $DOMAIN/.well-known/matrix/ to http://$AUTO_LOCAL_IP:80${RESET}"
+            echo -e "   ${INFO}   or use the base domain tunnel with a static JSON response — see the Pangolin guide below.${RESET}"
             ;;
         cloudflare)
             echo -e "   ${INFO}   Cloudflare Tunnel cannot serve inline JSON — use the nginx well-known config above, or serve${RESET}"
@@ -1617,7 +1724,7 @@ upstream_oauth2:
   providers: []
 
 matrix:
-  homeserver: "$SERVER_NAME"
+  homeserver: "$DOMAIN"
   secret: "$MAS_SECRET"
   endpoint: http://synapse:8008
 
@@ -1652,7 +1759,6 @@ account:
   display_name_change_allowed: true
   password_change_allowed: true
   password_registration_enabled: $MAS_REGISTRATION
-  $(if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then echo "# password_registration_email_required: true"; else echo "password_registration_email_required: false"; fi)
 
 policy:
   registration:
@@ -2132,6 +2238,26 @@ COMPOSEEOF
       com.docker.compose.project: "matrix-stack"\\
 ' "$TARGET_DIR/compose.yaml"
         echo -e "   ${SUCCESS}✓ Traefik added to stack${RESET}"
+    fi
+
+    # Add Newt tunnel container if Pangolin is selected
+    if [[ "$PROXY_TYPE" == "pangolin" ]]; then
+        sed -i '/^networks:/i\
+\
+  # Newt — Pangolin tunnel client (zero open ports on home server)\
+  newt:\
+    container_name: newt\
+    image: fosrl/newt:latest\
+    restart: unless-stopped\
+    environment:\
+      - PANGOLIN_URL='"$PANGOLIN_URL"'\
+      - TUNNEL_ID='"$PANGOLIN_NEWT_ID"'\
+      - TUNNEL_SECRET='"$PANGOLIN_NEWT_SECRET"'\
+    networks: [ matrix-net ]\
+    labels:\
+      com.docker.compose.project: "matrix-stack"\
+' "$TARGET_DIR/compose.yaml"
+        echo -e "   ${SUCCESS}✓ Newt tunnel container added to stack${RESET}"
     fi
 }
 
@@ -2694,70 +2820,56 @@ show_npm_guide() {
     echo -e "${ACCENT}Create Proxy Host:${RESET}"
     echo -e "   Domain:     ${INFO}$DOMAIN${RESET}"
     echo -e "   Forward to: ${INFO}http://$PROXY_IP:8008${RESET}"
-    echo -e "   Enable:     SSL (Force HTTPS), Let's Encrypt certificate\n"
+    echo -e "   Enable:     SSL (Force HTTPS), Let's Encrypt certificate"
+    echo -e "   ${NOTE_ICON}${SUCCESS}NOTE: For the base domain an Origin server certificate might be needed${RESET}\n"
     echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
     print_code << BASECONF
-# Strip Synapse's own CORS headers to prevent duplicates (causes browser CORS errors)
-proxy_hide_header Access-Control-Allow-Origin;
-proxy_hide_header Access-Control-Allow-Methods;
-proxy_hide_header Access-Control-Allow-Headers;
-client_max_body_size 50M;
-proxy_read_timeout 600s;
-proxy_send_timeout 600s;
-
-# CRITICAL: login/logout/refresh MUST route to MAS (not Synapse) when OIDC is enabled
-location ~* ^/_matrix/client/(v3|r0)/(login|logout|refresh) {
-    proxy_pass http://$PROXY_IP:8010;
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_set_header X-Forwarded-Host \$host;
+# Matrix well-known - required for client and federation discovery
+location = /.well-known/matrix/server {
+    return 200 '{"m.server": "$SUB_MATRIX.$DOMAIN:443"}';
+    default_type application/json;
     add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+    add_header Cache-Control "no-cache" always;
 }
 
-# Synapse admin API - required for Element Admin dashboard (rooms, users, server info)
-location ~* ^/_synapse/admin/ {
+location = /.well-known/matrix/client {
+    return 200 '{"m.homeserver":{"base_url":"https://$SUB_MATRIX.$DOMAIN"},"m.identity_server":{"base_url":"https://vector.im"},"m.authentication":{"issuer":"https://$SUB_MAS.$DOMAIN/","account":"https://$SUB_MAS.$DOMAIN/account"},"org.matrix.msc3575.proxy":{"url":"https://$SUB_SLIDING_SYNC.$DOMAIN"},"org.matrix.msc4143.rtc_focus":{"url":"https://$SUB_LIVEKIT.$DOMAIN"}}';
+    default_type application/json;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Cache-Control "no-cache" always;
+}
+
+# Matrix client API - required for auth_metadata and OIDC discovery (e.g. Element Admin)
+location ~* ^/_matrix/client/ {
     proxy_pass http://$PROXY_IP:8008;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_hide_header Access-Control-Allow-Origin;
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
 }
 
-# Synapse client OIDC endpoints
-location ~* ^/_synapse/client/ {
+# Synapse ESS version endpoint - required for Element Admin
+location ~* ^/_synapse/ess/ {
     proxy_pass http://$PROXY_IP:8008;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_hide_header Access-Control-Allow-Origin;
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
 }
 
-# All other Matrix API endpoints
-location ~* ^/_matrix/ {
-    proxy_pass http://$PROXY_IP:8008;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+# Redirect root to Element Web
+location / {
+    return 302 https://$SUB_ELEMENT.$DOMAIN;
 }
 BASECONF
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
@@ -2794,6 +2906,19 @@ location ~* ^/_matrix/client/(v3|r0)/(login|logout|refresh) {
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_set_header X-Forwarded-Host \$host;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+}
+
+# Synapse admin API - required for Element Admin dashboard (rooms, users, server info)
+location ~* ^/_synapse/admin/ {
+    proxy_pass http://$PROXY_IP:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
@@ -3384,6 +3509,107 @@ CFTURNEOF
 
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
     read -r
+}
+
+# Display Pangolin setup guide
+show_pangolin_guide() {
+    clear
+    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BANNER}│                   PANGOLIN SETUP GUIDE                       │${RESET}"
+    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+
+    echo -e "\n${ACCENT}── STEP 1: Configure tunnels in Pangolin Dashboard ──────────────${RESET}"
+    echo -e "   ${INFO}Open your Pangolin dashboard: ${SUCCESS}$PANGOLIN_URL${RESET}"
+    echo -e "   ${INFO}For each service below, create a new Tunnel resource pointing to:${RESET}"
+    echo -e "   ${WARNING}Target: http://$AUTO_LOCAL_IP:<port>${RESET}\n"
+    echo -e "   ┌─────────────────────────────────┬─────────────────────────────┐"
+    printf "   │ ${DNS_HOSTNAME}%-31s${RESET} │ ${PUBLIC_IP_COLOR}%-27s${RESET} │\n" "SUBDOMAIN" "TARGET"
+    echo -e "   ├─────────────────────────────────┼─────────────────────────────┤"
+    printf "   │ %-31s │ %-27s │\n" "$SUB_MATRIX.$DOMAIN" "http://$AUTO_LOCAL_IP:8008"
+    printf "   │ %-31s │ %-27s │\n" "$SUB_MAS.$DOMAIN" "http://$AUTO_LOCAL_IP:8010"
+    printf "   │ %-31s │ %-27s │\n" "$SUB_LIVEKIT.$DOMAIN" "http://$AUTO_LOCAL_IP:7880"
+    printf "   │ %-31s │ %-27s │\n" "$SUB_ELEMENT.$DOMAIN" "http://$AUTO_LOCAL_IP:8012"
+    if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
+        printf "   │ %-31s │ %-27s │\n" "$SUB_CALL.$DOMAIN" "http://$AUTO_LOCAL_IP:8007"
+    fi
+    if [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]]; then
+        printf "   │ %-31s │ %-27s │\n" "$SUB_ELEMENT_ADMIN.$DOMAIN" "http://$AUTO_LOCAL_IP:8014"
+    fi
+    if [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]]; then
+        printf "   │ %-31s │ %-27s │\n" "$SUB_SYNAPSE_ADMIN.$DOMAIN" "http://$AUTO_LOCAL_IP:8009"
+    fi
+    if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
+        printf "   │ %-31s │ %-27s │\n" "$SUB_SLIDING_SYNC.$DOMAIN" "http://$AUTO_LOCAL_IP:8011"
+    fi
+    if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
+        printf "   │ %-31s │ %-27s │\n" "$SUB_MEDIA_REPO.$DOMAIN" "http://$AUTO_LOCAL_IP:8013"
+    fi
+    echo -e "   └─────────────────────────────────┴─────────────────────────────┘"
+    echo -e "\n   ${WARNING}⚠️  Do NOT tunnel TURN traffic — coturn runs directly on the VPS.${RESET}"
+    echo -e "${WARNING}Press ENTER to continue...${RESET}"
+    read -r
+
+    ##########################################################################
+    # STEP 2: coturn on VPS
+    ##########################################################################
+    clear
+    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BANNER}│               PANGOLIN — COTURN ON VPS                       │${RESET}"
+    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+    echo -e "\n${ACCENT}── STEP 2: Deploy coturn on your VPS ($PANGOLIN_VPS_IP) ────────────${RESET}"
+    echo -e "   ${INFO}SSH into your VPS and paste the following compose snippet.${RESET}"
+    echo -e "   ${INFO}Save it as ${CONFIG_PATH}~/coturn/compose.yaml${INFO} then run ${WARNING}docker compose up -d${INFO}.${RESET}\n"
+    echo -e "${ACCENT}   coturn compose.yaml ${INFO}(copy everything inside the box):${RESET}"
+    print_code << COTURNEOF
+services:
+  coturn:
+    container_name: coturn
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      -n
+      --log-file=stdout
+      --realm=$DOMAIN
+      --listening-ip=$PANGOLIN_VPS_IP
+      --external-ip=$PANGOLIN_VPS_IP
+      --listening-port=3478
+      --tls-listening-port=5349
+      --no-tls
+      --no-dtls
+      --lt-cred-mech
+      --use-auth-secret
+      --static-auth-secret=$LK_API_SECRET
+      --no-loopback-peers
+      --no-multicast-peers
+      --cli-password=$LK_API_SECRET
+COTURNEOF
+    echo -e "\n   ${SUCCESS}✓ Uses LiveKit's shared secret — no extra credentials to manage${RESET}"
+    echo -e "   ${WARNING}⚠️  Open ports on the VPS firewall: UDP/TCP 3478 and TCP 5349${RESET}"
+    echo -e "${WARNING}Press ENTER to continue...${RESET}"
+    read -r
+
+    ##########################################################################
+    # STEP 3: DNS records
+    ##########################################################################
+    clear
+    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BANNER}│               PANGOLIN — DNS RECORDS                         │${RESET}"
+    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
+    echo -e "\n${ACCENT}── STEP 3: DNS records ──────────────────────────────────────────${RESET}"
+    echo -e "   ${INFO}Pangolin manages subdomains via its own reverse proxy.${RESET}"
+    echo -e "   ${INFO}Only the TURN subdomain needs a direct DNS record pointing to the VPS.${RESET}\n"
+    echo -e "   ┌─────────────────┬───────────┬─────────────────┬─────────────────┐"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ %-15s │ %-15s │\n" "HOSTNAME" "TYPE" "VALUE" "STATUS"
+    echo -e "   ├─────────────────┼───────────┼─────────────────┼─────────────────┤"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ %-15s │\n" "turn" "A" "$PANGOLIN_VPS_IP" "DNS ONLY"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${INFO}%-15s${RESET} │ %-15s │\n" "* (wildcard)" "CNAME" "pangolin" "via Pangolin"
+    echo -e "   └─────────────────┴───────────┴─────────────────┴─────────────────┘"
+    echo -e "\n   ${WARNING}⚠️  TURN must always be DNS ONLY — never proxy TURN traffic${RESET}"
+    echo -e "${WARNING}Press ENTER to continue...${RESET}"
+    read -r
+
+    clear
 }
 
 ################################################################################
@@ -4457,29 +4683,51 @@ main_deployment() {
     elif command -v wget >/dev/null 2>&1; then
         RAW_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me/ip 2>/dev/null)
     fi
-    
-    DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-    DETECTED_LOCAL=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
-    if [ -z "$DETECTED_LOCAL" ]; then
-        DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
-    fi
-    
-    echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
-    echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
-    
-    ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
-    
-    if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
-        AUTO_PUBLIC_IP=$DETECTED_PUBLIC
-        AUTO_LOCAL_IP=$DETECTED_LOCAL
-    else
-        echo -ne "Enter Public IP: ${WARNING}"
-        read -r AUTO_PUBLIC_IP
-        echo -e "${RESET}"
-        echo -ne "Enter Local IP: ${WARNING}"
-        read -r AUTO_LOCAL_IP
-        echo -e "${RESET}"
-    fi
+
+    while true; do
+        DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+        DETECTED_LOCAL=$(hostname -I | awk '{print $1}')
+
+        echo -e "\n   ${INFO}Detected IP addresses:${RESET}"
+        echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
+        echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
+        echo ""
+
+        ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
+
+        if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
+            AUTO_PUBLIC_IP=$DETECTED_PUBLIC
+            AUTO_LOCAL_IP=$DETECTED_LOCAL
+            break
+        elif [[ "$IP_CONFIRM" =~ ^[Nn]$ ]]; then
+            echo -e "\n   ${INFO}Enter IP addresses manually (or type 'back' to return to IP selection):${RESET}\n"
+
+            echo -ne "   Enter Public IP [${DETECTED_PUBLIC:-required}]: ${WARNING}"
+            read -r AUTO_PUBLIC_IP
+            echo -e "${RESET}"
+
+            if [[ "$AUTO_PUBLIC_IP" == "back" ]] || [[ "$AUTO_PUBLIC_IP" == "b" ]]; then
+                echo -e "   ${INFO}Returning to IP selection...${RESET}"
+                continue
+            fi
+
+            echo -ne "   Enter Local IP [${DETECTED_LOCAL:-required}]: ${WARNING}"
+            read -r AUTO_LOCAL_IP
+            echo -e "${RESET}"
+
+            if [[ "$AUTO_LOCAL_IP" == "back" ]] || [[ "$AUTO_LOCAL_IP" == "b" ]]; then
+                echo -e "   ${INFO}Returning to IP selection...${RESET}"
+                continue
+            fi
+
+            if [ -z "$AUTO_PUBLIC_IP" ] || [ -z "$AUTO_LOCAL_IP" ]; then
+                echo -e "   ${ERROR}Both Public and Local IPs are required. Please try again.${RESET}"
+                continue
+            fi
+
+            break
+        fi
+    done
 
     ############################################################################
     # STEP 4: Smart Conflict Detection & Cleanup                              #
@@ -4990,19 +5238,49 @@ echo -e "   ${CHOICE_COLOR}1)${RESET} Nginx Proxy Manager (NPM/NPMPlus)"
 echo -e "   ${CHOICE_COLOR}2)${RESET} Caddy"
 echo -e "   ${CHOICE_COLOR}3)${RESET} Traefik"
 echo -e "   ${CHOICE_COLOR}4)${RESET} Cloudflare Tunnel"
-echo -e "   ${CHOICE_COLOR}5)${RESET} Manual Setup"
-ask_choice PROXY_SELECT "Selection (1-5): " 1 2 3 4 5
+echo -e "   ${CHOICE_COLOR}5)${RESET} Pangolin (Newt tunnel — no open ports needed)"
+echo -e "   ${CHOICE_COLOR}6)${RESET} Manual Setup"
+ask_choice PROXY_SELECT "Selection (1-6): " 1 2 3 4 5 6
 
 case $PROXY_SELECT in
     1) PROXY_TYPE="npm" ;;
     2) PROXY_TYPE="caddy" ;;
     3) PROXY_TYPE="traefik" ;;
     4) PROXY_TYPE="cloudflare" ;;
+    5) PROXY_TYPE="pangolin" ;;
     *) PROXY_TYPE="manual" ;;
 esac
 
-if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "cloudflare" ]] && [[ "$PROXY_TYPE" != "manual" ]]; then
+if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "cloudflare" ]] && [[ "$PROXY_TYPE" != "manual" ]] && [[ "$PROXY_TYPE" != "pangolin" ]]; then
     echo -e "\n   ${WARNING}⚠️  This will add $PROXY_TYPE to your Docker stack and install it automatically.${RESET}"
+fi
+
+# Pangolin-specific configuration
+if [[ "$PROXY_TYPE" == "pangolin" ]]; then
+    echo -e "\n${ACCENT}Pangolin Configuration:${RESET}"
+    echo -e "   ${INFO}Pangolin uses a Newt tunnel so your home server needs zero open ports.${RESET}"
+    echo -e "   ${INFO}TURN/coturn will run on a separate VPS with a public IP.${RESET}"
+    echo ""
+    echo -ne "Pangolin Dashboard URL (e.g. https://pangolin.example.com): ${WARNING}"
+    read -r PANGOLIN_URL
+    echo -e "${RESET}"
+    # Strip trailing slash
+    PANGOLIN_URL="${PANGOLIN_URL%/}"
+
+    echo -ne "Newt Tunnel ID: ${WARNING}"
+    read -r PANGOLIN_NEWT_ID
+    echo -e "${RESET}"
+
+    echo -ne "Newt Tunnel Secret: ${WARNING}"
+    read -r PANGOLIN_NEWT_SECRET
+    echo -e "${RESET}"
+
+    echo -ne "VPS Public IP (for coturn / TURN): ${WARNING}"
+    read -r PANGOLIN_VPS_IP
+    echo -e "${RESET}"
+
+    echo -e "   ${SUCCESS}✓ Pangolin config collected — Newt container will be added to your stack${RESET}"
+    echo -e "   ${SUCCESS}✓ LiveKit TURN will point to your VPS at ${PANGOLIN_VPS_IP}${RESET}"
 fi
 
 PROXY_IP="$AUTO_LOCAL_IP"
@@ -5066,7 +5344,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     generate_synapse_config
     generate_bridge_configs
     generate_wellknown_files
-    if [ "$PROXY_ALREADY_RUNNING" = false ]; then
+    if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "pangolin" ]]; then
         setup_nginx_wellknown
     fi
 
@@ -5476,6 +5754,10 @@ PROXY_IP="$AUTO_LOCAL_IP"
         echo -e "\n${ACCENT}Would you like guided setup for Cloudflare Tunnel? (y/n):${RESET} "
         read -r SHOW_GUIDE
         [[ "$SHOW_GUIDE" =~ ^[Yy]$ ]] && show_cloudflare_guide
+    elif [[ "$PROXY_TYPE" == "pangolin" ]]; then
+        echo -e "\n${ACCENT}Would you like the Pangolin setup guide? (y/n):${RESET} "
+        read -r SHOW_GUIDE
+        [[ "$SHOW_GUIDE" =~ ^[Yy]$ ]] && show_pangolin_guide
     fi
 
     ############################################################################
