@@ -1760,6 +1760,7 @@ account:
   display_name_change_allowed: true
   password_change_allowed: true
   password_registration_enabled: $MAS_REGISTRATION
+  password_registration_email_required: $(if [[ "$REQUIRE_EMAIL_VERIFICATION" =~ ^[Yy]$ ]]; then echo "true"; else echo "false"; fi)
 
 policy:
   registration:
