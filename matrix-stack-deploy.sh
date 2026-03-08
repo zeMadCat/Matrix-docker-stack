@@ -1203,9 +1203,11 @@ turn:
   external_tls: true
 LIVEKITEOF
 
-    # Replace placeholders with proper escaping
-    sed -i "s|REPLACE_LK_API_KEY|$LK_API_KEY|g" "$TARGET_DIR/livekit/livekit.yaml"
-    sed -i "s|REPLACE_LK_API_SECRET|$LK_API_SECRET|g" "$TARGET_DIR/livekit/livekit.yaml"
+    # Replace placeholders with proper escaping for sed special characters
+    LK_API_KEY_ESCAPED=$(printf '%s\n' "$LK_API_KEY" | sed -e 's/[\/&]/\\&/g')
+    LK_API_SECRET_ESCAPED=$(printf '%s\n' "$LK_API_SECRET" | sed -e 's/[\/&]/\\&/g')
+    sed -i "s|REPLACE_LK_API_KEY|$LK_API_KEY_ESCAPED|g" "$TARGET_DIR/livekit/livekit.yaml"
+    sed -i "s|REPLACE_LK_API_SECRET|$LK_API_SECRET_ESCAPED|g" "$TARGET_DIR/livekit/livekit.yaml"
     if [[ "$PROXY_TYPE" == "pangolin" ]]; then
         # Pangolin: TURN runs on the VPS, use its IP directly
         sed -i "s/REPLACE_TURN_DOMAIN/$PANGOLIN_VPS_IP/g" "$TARGET_DIR/livekit/livekit.yaml"
