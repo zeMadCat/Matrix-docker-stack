@@ -1326,7 +1326,6 @@ EOF
     echo -e "   ${SUCCESS}✓ Matrix Media Repo config created${RESET}"
     echo -e "   ${INFO}ℹ  Using local file storage at ${TARGET_DIR}/media-repo/data${RESET}"
     echo -e "   ${INFO}ℹ  To use S3, edit: ${TARGET_DIR}/media-repo/config.yaml${RESET}"
-    validate_config "$TARGET_DIR/media-repo/config.yaml"
 }
 
 generate_element_web_config() {
@@ -1918,7 +1917,6 @@ EOF
     if [[ "$ENABLE_CAPTCHA" =~ ^[Yy]$ ]]; then
         echo -e "   ${WARNING}⚠️  Remember to add reCAPTCHA keys to: $TARGET_DIR/mas/config.yaml${RESET}"
     fi
-    validate_config "$TARGET_DIR/mas/config.yaml"
 }
 
 # Generate PostgreSQL initialization script (creates syncv3 database for Sliding Sync)
