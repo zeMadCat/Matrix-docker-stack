@@ -11,7 +11,6 @@
 > <details open>
 > <summary><strong>v1.7</strong> — 2026-03-08</summary>
 >
-> - **Config validation** — `validate_config()` auto-detects file extension (YAML/JSON)
 > - **Bridge error messages** — show log file paths and last 5 lines of output
 > - **NPM port fallback** — auto-detects port conflicts, falls back to 8000/8443 if 80/443 in use
 > - **Diagnostics menu** — option 7 collects system info, Docker config, logs, saves to timestamped file
