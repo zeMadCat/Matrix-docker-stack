@@ -1183,7 +1183,7 @@ rtc:
   tcp_port: 7881
 
 keys:
-  REPLACE_LK_API_KEY: REPLACE_LK_API_SECRET
+  "REPLACE_LK_API_KEY": "REPLACE_LK_API_SECRET"
 
 logging:
   level: info
@@ -1203,9 +1203,9 @@ turn:
   external_tls: true
 LIVEKITEOF
 
-    # Replace placeholders
-    sed -i "s/REPLACE_LK_API_KEY/$LK_API_KEY/g" "$TARGET_DIR/livekit/livekit.yaml"
-    sed -i "s/REPLACE_LK_API_SECRET/$LK_API_SECRET/g" "$TARGET_DIR/livekit/livekit.yaml"
+    # Replace placeholders with proper escaping
+    sed -i "s|REPLACE_LK_API_KEY|$LK_API_KEY|g" "$TARGET_DIR/livekit/livekit.yaml"
+    sed -i "s|REPLACE_LK_API_SECRET|$LK_API_SECRET|g" "$TARGET_DIR/livekit/livekit.yaml"
     if [[ "$PROXY_TYPE" == "pangolin" ]]; then
         # Pangolin: TURN runs on the VPS, use its IP directly
         sed -i "s/REPLACE_TURN_DOMAIN/$PANGOLIN_VPS_IP/g" "$TARGET_DIR/livekit/livekit.yaml"
@@ -5116,7 +5116,7 @@ main_deployment() {
     fi
 
     echo -e "\n${ACCENT}>> Installing required dependencies...${RESET}"
-    local deps=("curl" "wget" "openssl" "jq" "logrotate")
+    local deps=("curl" "wget" "openssl" "jq" "python3" "logrotate")
     local coreutils_check=$(dpkg-query -W -f='${Status}' coreutils 2>/dev/null | grep -c "ok installed" || echo "0")
     local to_install=()
     
