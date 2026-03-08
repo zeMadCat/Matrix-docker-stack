@@ -2,6 +2,40 @@ Matrix Synapse Full Stack Deployer — Changelog
 by MadCat
 ================================================================================
 
+v1.7 (2026-03-08)
+─────────────────
+  - JSON + YAML config validation: validate_yaml() renamed to validate_config(),
+    auto-detects file extension (.yaml/.yml → yaml.safe_load(), .json → python3 -m json.tool).
+  - Bridge error messages show actual log file path with last 5 lines of output.
+  - Port conflict detection and auto-fallback for NPM: find_available_port() and
+    check_port_conflicts() functions added; if ports 80/443 in use, fallback to 8000/8443.
+  - Enhanced Docker restart logic: checks systemd availability and Docker daemon status.
+  - Diagnostics integration: new run_diagnostics() function (menu option 7);
+    collects Docker versions, container lists, last 20 lines of logs, config snippets,
+    network details; saves to timestamped file with chmod 600; auto-detects Matrix
+    installation path from TARGET_DIR, container, or common paths.
+  - Bridge container deduplication in resource scanner: bridge containers filtered
+    from main table; bridge directory listing kept at bottom under directory entry.
+  - Well-Known setup message for NPM: clarifies that NPM handles well-known endpoint.
+  - Matrix Media Repo healthcheck fixed: changed from localhost:8013 to $AUTO_LOCAL_IP:8013;
+    added Docker fallback check (docker ps | grep -q "^matrix-media-repo$").
+  - Bridge cleanup output: shows ✕ discord (bridge), ✕ meta (bridge), etc. during uninstall.
+  - System-wide resource detection: STACK_PATHS expanded from 2 to 4+ paths
+    (/opt/stacks/matrix-stack, /opt/matrix-stack, $HOME/matrix-stack, $(pwd)/matrix-stack);
+    auto-detects paths from running Docker container volume mounts.
+  - Selective installation cleanup menu: whiptail checklist dialog for multiple installs
+    (SPACE to toggle, ENTER to confirm); falls back to text menu if whiptail unavailable;
+    subdirectories filtered out (only root stack directories shown).
+  - Container-to-stack mapping: CONTAINER_TO_STACK tracks which containers belong to which
+    installation; volumes only deleted if used by containers being removed; networks protected
+    unless all stacks removed; proper isolation per installation.
+  - Sed delimiter fix: changed NPM port mapping sed from /^networks:/ to \|^networks:|
+    to avoid "unterminated address regex" error with dynamic port variables.
+  - NPM healthcheck fix: changed from localhost:81 to $AUTO_LOCAL_IP:81; added Docker
+    fallback check (docker ps | grep -q "^nginx-proxy-manager$").
+
+================================================================================
+
 v1.6 (2026-03-03)
 ─────────────────
   - Added msc4186_enabled: true to homeserver.yaml — enables native Simplified Sliding Sync for Element X.

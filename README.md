@@ -9,6 +9,23 @@
 > **Changelog**
 >
 > <details open>
+> <summary><strong>v1.7</strong> — 2026-03-08</summary>
+>
+> - **Config validation** — `validate_config()` auto-detects file extension (YAML/JSON)
+> - **Bridge error messages** — show log file paths and last 5 lines of output
+> - **NPM port fallback** — auto-detects port conflicts, falls back to 8000/8443 if 80/443 in use
+> - **Diagnostics menu** — option 7 collects system info, Docker config, logs, saves to timestamped file
+> - **Bridge container deduplication** — bridges listed separately from main containers in cleanup
+> - **Media Repo healthcheck** — fixed to use local IP instead of localhost; added Docker check fallback
+> - **System-wide resource detection** — detects multiple Matrix installs; auto-discovers paths from running containers
+> - **Selective cleanup menu** — whiptail checklist dialog to choose which installs to remove (SPACE to toggle)
+> - **Container isolation** — proper mapping of containers to installations; volumes protected per install
+> - **Sed fixes** — delimiter change to avoid regex errors with dynamic port variables
+> - **NPM healthcheck fix** — uses local IP instead of localhost
+>
+> </details>
+>
+> <details>
 > <summary><strong>v1.6</strong> — 2026-03-03</summary>
 >
 > - **Element X support** — `msc4186_enabled: true` added; Element X now works
@@ -147,7 +164,7 @@ The script checks GitHub for a newer version before showing the menu. If one is 
 │                      │  • Multi-Screenshare                  │
 │                      │                                       │
 ├──────────────────────────────────────────────────────────────┤
-│                    Script Version: v1.6                      │
+│                    Script Version: v1.7                      │
 └──────────────────────────────────────────────────────────────┘
 
  What would you like to do?

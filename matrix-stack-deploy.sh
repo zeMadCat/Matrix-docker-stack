@@ -44,7 +44,7 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.6"
+SCRIPT_VERSION="1.7"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
@@ -81,6 +81,9 @@ NOTE_ICON='\033[1;93m'             # Yellow - Note icons
 NOTE_TEXT='\033[1;97m'             # White - Note text
 RESET='\033[0m'                    # Reset colors
 CODE='\033[0;32m'                  # Dark green - code block content
+
+# Global installation directory (set during installation, used by other functions)
+TARGET_DIR=""
 
 ################################################################################
 # UI FUNCTIONS                                                                 #
@@ -985,8 +988,8 @@ setup_log_rotation() {
 LOGROTATEEOF
 
     # Create specific configuration for Matrix stack logs
-    cat > /etc/logrotate.d/matrix-stack << 'MATRIXLOGROTATEEOF'
-/opt/stacks/matrix-stack/**/*.log {
+    cat > /etc/logrotate.d/matrix-stack << EOF
+${TARGET_DIR:-/opt/stacks/matrix-stack}/**/*.log {
     rotate 7
     daily
     compress
@@ -996,7 +999,7 @@ LOGROTATEEOF
     maxsize 100M
     create 0644 root root
 }
-MATRIXLOGROTATEEOF
+EOF
 
     # Configure system-wide log rotation settings
     cat > /etc/logrotate.conf << 'LOGROTATECONF'
@@ -1067,12 +1070,91 @@ CRONEOF
 }
 DOCKERDAEMONEOF
         
-        systemctl restart docker
-        echo -e "   ${INFO}ℹ  Docker configured with log rotation (max-size 100m, max-file 3)${RESET}"
+        # Restart Docker only if systemd is present and Docker is running
+        if command -v systemctl &>/dev/null; then
+            if systemctl is-active --quiet docker; then
+                systemctl restart docker 2>/dev/null
+                echo -e "   ${INFO}ℹ  Docker configured with log rotation (max-size 100m, max-file 3) — restarted${RESET}"
+            else
+                echo -e "   ${INFO}ℹ  Docker log rotation config written. Docker service not running — will apply on next start.${RESET}"
+            fi
+        else
+            echo -e "   ${INFO}ℹ  Docker log rotation config written. systemd not found — please restart Docker manually.${RESET}"
+        fi
         
         return 0
     else
         echo -e "   ${ERROR}✗ Failed to configure log rotation${RESET}"
+        return 1
+    fi
+}
+
+# Validate config file syntax (YAML or JSON)
+validate_config() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo -e "   ${WARNING}⚠️  Config file not found: $file${RESET}"
+        return 1
+    fi
+    
+    if command -v python3 &>/dev/null; then
+        if [[ "$file" =~ \.(yaml|yml)$ ]]; then
+            # YAML validation
+            if ! python3 -c "import yaml; yaml.safe_load(open('$file'))" 2>/dev/null; then
+                echo -e "   ${ERROR}✗ Invalid YAML in $file${RESET}"
+                exit 1
+            fi
+        elif [[ "$file" =~ \.json$ ]]; then
+            # JSON validation
+            if ! python3 -m json.tool "$file" >/dev/null 2>&1; then
+                echo -e "   ${ERROR}✗ Invalid JSON in $file${RESET}"
+                exit 1
+            fi
+        fi
+    else
+        echo -e "   ${WARNING}⚠️  python3 not found, skipping config validation for $file${RESET}"
+    fi
+}
+
+# Check if a port is in use and find the next available port in a range
+find_available_port() {
+    local start_port="$1"
+    local max_attempts="${2:-100}"
+    local port="$start_port"
+    local attempts=0
+    
+    while (( attempts < max_attempts )); do
+        if ! ss -lpn 2>/dev/null | grep -q ":$port "; then
+            echo "$port"
+            return 0
+        fi
+        ((port++))
+        ((attempts++))
+    done
+    
+    echo ""
+    return 1
+}
+
+# Check which ports are in use and determine fallback ports for NPM
+check_port_conflicts() {
+    local http_port=80
+    local https_port=443
+    local http_available=true
+    local https_available=true
+    
+    if ss -lpn 2>/dev/null | grep -q ":80 "; then
+        http_available=false
+    fi
+    
+    if ss -lpn 2>/dev/null | grep -q ":443 "; then
+        https_available=false
+    fi
+    
+    # Return status: 0 = both free, 1 = conflicts exist
+    if [ "$http_available" = true ] && [ "$https_available" = true ]; then
+        return 0
+    else
         return 1
     fi
 }
@@ -1132,6 +1214,7 @@ LIVEKITEOF
         sed -i "s/REPLACE_TURN_DOMAIN/turn.$DOMAIN/g" "$TARGET_DIR/livekit/livekit.yaml"
         echo -e "   ${SUCCESS}✓ LiveKit config created - unlimited screenshares + built-in TURN/STUN enabled${RESET}"
     fi
+    validate_config "$TARGET_DIR/livekit/livekit.yaml"
 }
 
 # Generate Element Call configuration
@@ -1162,6 +1245,7 @@ generate_element_call_config() {
 EOF
     
     echo -e "   ${SUCCESS}✓ Element Call config created${RESET}"
+    validate_config "$TARGET_DIR/element-call/config.json"
 }
 
 generate_media_repo_config() {
@@ -1240,6 +1324,7 @@ EOF
     echo -e "   ${SUCCESS}✓ Matrix Media Repo config created${RESET}"
     echo -e "   ${INFO}ℹ  Using local file storage at ${TARGET_DIR}/media-repo/data${RESET}"
     echo -e "   ${INFO}ℹ  To use S3, edit: ${TARGET_DIR}/media-repo/config.yaml${RESET}"
+    validate_config "$TARGET_DIR/media-repo/config.yaml"
 }
 
 generate_element_web_config() {
@@ -1291,6 +1376,7 @@ generate_element_web_config() {
 EOF
 
     echo -e "   ${SUCCESS}✓ Element Web config created${RESET}"
+    validate_config "$TARGET_DIR/element-web/config.json"
 }
 
 ################################################################################
@@ -1324,12 +1410,18 @@ generate_bridge_configs() {
 
                 # Step 1: extract example config from image if no config exists yet
                 if [ ! -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
-                    docker run --rm \
+                    if ! docker run --rm \
                         --entrypoint /bin/sh \
                         -v "$TARGET_DIR/bridges/$bridge:/data" \
                         dock.mau.dev/mautrix/$bridge:latest \
                         -c "cp $EXAMPLE_PATH /data/config.yaml" \
-                        > "$GEN_LOG" 2>&1
+                        > "$GEN_LOG" 2>&1; then
+                        echo -e "   ${ERROR}✗ Failed to extract example config for $bridge.${RESET}"
+                        echo -e "   ${INFO}Log: ${CONFIG_PATH}$GEN_LOG${RESET}"
+                        echo -e "   ${INFO}Last 5 lines:${RESET}"
+                        tail -5 "$GEN_LOG" 2>/dev/null | sed 's/^/      /'
+                        continue
+                    fi
                 fi
 
                 # Step 2: patch the minimum required fields so -g doesn't refuse to run
@@ -1344,13 +1436,20 @@ generate_bridge_configs() {
 
                 # Step 3: generate registration.yaml from the patched config
                 if [ -f "$TARGET_DIR/bridges/$bridge/config.yaml" ]; then
-                    docker run --rm \
+                    if docker run --rm \
                         --entrypoint "$ENTRYPOINT" \
                         -v "$TARGET_DIR/bridges/$bridge:/data" \
                         dock.mau.dev/mautrix/$bridge:latest \
                         -g -c /data/config.yaml -r /data/registration.yaml \
-                        >> "$GEN_LOG" 2>&1
-                    [ -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ] && GEN_OK=true
+                        >> "$GEN_LOG" 2>&1; then
+                        [ -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ] && GEN_OK=true
+                    else
+                        echo -e "   ${ERROR}✗ Failed to generate registration for $bridge.${RESET}"
+                        echo -e "   ${INFO}Log: ${CONFIG_PATH}$GEN_LOG${RESET}"
+                        echo -e "   ${INFO}Last 5 lines:${RESET}"
+                        tail -5 "$GEN_LOG" 2>/dev/null | sed 's/^/      /'
+                        continue
+                    fi
                 else
                     echo "Failed to extract example config from image" >> "$GEN_LOG"
                 fi
@@ -1378,12 +1477,7 @@ generate_bridge_configs() {
                 sed -i "s|domain: example.com|domain: $DOMAIN|g" "$CFG" 2>/dev/null
                 # Database URI — bridge needs its own postgres database
                 local BRIDGE_DB="mautrix_${bridge}"
-                # Create the database if it doesn't exist
-                docker exec synapse-db psql -U "$DB_USER" -tc \
-                    "SELECT 1 FROM pg_database WHERE datname='$BRIDGE_DB'" 2>/dev/null \
-                    | grep -q 1 || \
-                    docker exec synapse-db psql -U "$DB_USER" \
-                    -c "CREATE DATABASE $BRIDGE_DB OWNER $DB_USER;" 2>/dev/null
+                # Note: databases are now created in PostgreSQL init script, not here.
                 # Patch the URI line — handles both commented and uncommented variants
                 sed -i \
                     -e "s|uri: postgres://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@postgres/$BRIDGE_DB?sslmode=disable|g" \
@@ -1482,12 +1576,22 @@ setup_nginx_wellknown() {
     if ! command -v nginx &>/dev/null; then
         echo -e "   ${WARNING}⚠️  nginx not found on this machine - skipping${RESET}"
         case "$PROXY_TYPE" in
-            npm)      echo -e "   ${INFO}ℹ  Serve well-known via the NPM Advanced Tab config in the setup guide below.${RESET}" ;;
+            npm)      
+                echo -e "   ${INFO}ℹ  NPM will handle the well-known endpoint.${RESET}"
+                echo -e "   ${INFO}   After deployment, configure in NPM Advanced Tab (see guide below).${RESET}"
+                ;;
             caddy)    echo -e "   ${INFO}ℹ  Serve well-known via the Caddyfile config in the setup guide below.${RESET}" ;;
             traefik)  echo -e "   ${INFO}ℹ  Serve well-known via the Traefik config in the setup guide below.${RESET}" ;;
             pangolin) echo -e "   ${INFO}ℹ  Configure the base domain tunnel in Pangolin to serve well-known via the guide below.${RESET}" ;;
             *)        echo -e "   ${INFO}ℹ  Ensure your reverse proxy serves $TARGET_DIR/well-known/ at https://$DOMAIN/.well-known/matrix/${RESET}" ;;
         esac
+        return
+    fi
+
+    # Check if port 80 is already in use
+    if ss -lpn 2>/dev/null | grep -q ":80 "; then
+        echo -e "   ${WARNING}⚠️  Port 80 is already in use. Skipping automatic nginx well-known setup.${RESET}"
+        echo -e "   ${INFO}Please serve the well-known files manually.${RESET}"
         return
     fi
 
@@ -1812,6 +1916,7 @@ EOF
     if [[ "$ENABLE_CAPTCHA" =~ ^[Yy]$ ]]; then
         echo -e "   ${WARNING}⚠️  Remember to add reCAPTCHA keys to: $TARGET_DIR/mas/config.yaml${RESET}"
     fi
+    validate_config "$TARGET_DIR/mas/config.yaml"
 }
 
 # Generate PostgreSQL initialization script (creates syncv3 database for Sliding Sync)
@@ -1851,6 +1956,21 @@ EOSQL
 
 echo "PostgreSQL: media_repo database created (if needed)"
 PGINITEOF2
+    fi
+
+    # Add bridge databases if any selected
+    if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
+        for bridge in "${SELECTED_BRIDGES[@]}"; do
+            cat >> "$TARGET_DIR/postgres_init/01-create-databases.sh" << EOF
+
+# Create database for mautrix-$bridge bridge
+psql -v ON_ERROR_STOP=1 --username "\$POSTGRES_USER" --dbname "\$POSTGRES_DB" <<-EOSQL
+    SELECT 'CREATE DATABASE mautrix_${bridge}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mautrix_${bridge}')\gexec
+EOSQL
+echo "PostgreSQL: mautrix_${bridge} database created (if needed)"
+EOF
+        done
     fi
 
     chmod +x "$TARGET_DIR/postgres_init/01-create-databases.sh"
@@ -2172,25 +2292,25 @@ COMPOSEEOF
 
     # Add proxy services if needed
     if [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "npm" ]]; then
-        sed -i '/^networks:/i\\
-\\
-  # Nginx Proxy Manager - Reverse proxy with web UI\\
-  nginx-proxy-manager:\\
-    container_name: nginx-proxy-manager\\
-    image: jc21/nginx-proxy-manager:latest\\
-    restart: unless-stopped\\
-    ports:\\
-      - "80:80"\\
-      - "443:443"\\
-      - "81:81"\\
-    volumes:\\
-      - ./npm/data:/data\\
-      - ./npm/letsencrypt:/etc/letsencrypt\\
-    networks: [ matrix-net ]\\
-    labels:\\
-      com.docker.compose.project: "matrix-stack"\\
+        sed -i '\|^networks:|i\
+\
+  # Nginx Proxy Manager - Reverse proxy with web UI\
+  nginx-proxy-manager:\
+    container_name: nginx-proxy-manager\
+    image: jc21/nginx-proxy-manager:latest\
+    restart: unless-stopped\
+    ports:\
+      - "'"$NPM_HTTP_PORT"':80"\
+      - "'"$NPM_HTTPS_PORT"':443"\
+      - "81:81"\
+    volumes:\
+      - ./npm/data:/data\
+      - ./npm/letsencrypt:/etc/letsencrypt\
+    networks: [ matrix-net ]\
+    labels:\
+      com.docker.compose.project: "matrix-stack"\
 ' "$TARGET_DIR/compose.yaml"
-        echo -e "   ${SUCCESS}✓ Nginx Proxy Manager added to stack${RESET}"
+        echo -e "   ${SUCCESS}✓ Nginx Proxy Manager added to stack (ports: $NPM_HTTP_PORT:80, $NPM_HTTPS_PORT:443, 81:81)${RESET}"
     fi
 
     if [[ "$PROXY_ALREADY_RUNNING" == "false" && "$PROXY_TYPE" == "caddy" ]]; then
@@ -2407,6 +2527,7 @@ MEDIAEOF
     # Set correct ownership
     chown -R 991:991 "$TARGET_DIR/synapse"
     echo -e "   ${SUCCESS}✓ Synapse config created with MAS and LiveKit support${RESET}"
+    validate_config "$TARGET_DIR/synapse/homeserver.yaml"
 }
 
 ################################################################################
@@ -2420,7 +2541,9 @@ npm_autosetup() {
     # Wait for NPM API to become available (port 81)
     echo -ne "   ${INFO}Waiting for NPM to start${RESET}"
     local TRIES=0
-    until curl -fsS -o /dev/null "http://localhost:81/api/" 2>/dev/null || [ $TRIES -ge 60 ]; do
+    until curl -fsS -o /dev/null "http://$AUTO_LOCAL_IP:81/api/" 2>/dev/null || \
+          docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^nginx-proxy-manager$" || \
+          [ $TRIES -ge 60 ]; do
         echo -ne "."
         sleep 3
         ((TRIES++))
@@ -2437,7 +2560,7 @@ npm_autosetup() {
 
     # Authenticate with NPM default credentials to get a token
     local TOKEN
-    TOKEN=$(curl -s -X POST "http://localhost:81/api/tokens" \
+    TOKEN=$(curl -s -X POST "http://$AUTO_LOCAL_IP:81/api/tokens" \
         -H "Content-Type: application/json" \
         -d '{"identity":"admin@example.com","secret":"changeme"}' \
         | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
@@ -3434,13 +3557,29 @@ show_changelog() {
     echo -e "${ACCENT}v${SCRIPT_VERSION}${RESET} — latest"
     echo -e "${INFO}────────────────────────────────────────────${RESET}"
     echo -e ""
-    echo -e "  ${SUCCESS}•${RESET} Element X support — ${INFO}msc4186_enabled: true${RESET} added to Synapse"
+    echo -e "  ${SUCCESS}•${RESET} LiveKit JWT health check port fixed (8087 → 8089)"
+    echo -e "  ${SUCCESS}•${RESET} Network detection: added manual fallback if IPs not found"
+    echo -e "  ${SUCCESS}•${RESET} Hardcoded paths replaced with global TARGET_DIR variable"
+    echo -e "  ${SUCCESS}•${RESET} Bridge databases now created in PostgreSQL init script (fixes race condition)"
+    echo -e "  ${SUCCESS}•${RESET} Added error handling around docker run for bridge generation"
+    echo -e "  ${SUCCESS}•${RESET} Config validation now supports both YAML and JSON files (python3 required)"
+    echo -e "  ${SUCCESS}•${RESET} Bridge generation error messages now show log paths and last 5 lines"
+    echo -e "  ${SUCCESS}•${RESET} NPM port fallback: auto-detects 80/443 conflicts and uses 8000/8443"
+    echo -e "  ${SUCCESS}•${RESET} Docker restart logic: checks systemd availability and daemon status"
+    echo -e "  ${SUCCESS}•${RESET} setup_nginx_wellknown now checks for port 80 conflict"
+    echo -e "  ${SUCCESS}•${RESET} Log rotation: Docker restart only if systemd is present"
+    echo -e "  ${SUCCESS}•${RESET} New diagnostics option (7) to collect system info for troubleshooting"
+    echo -e ""
+    echo -e "${ACCENT}v1.6${RESET} — 2026-03-03"
+    echo -e "${INFO}────────────────────────────────────────────${RESET}"
+    echo -e ""
+    echo -e "  ${SUCCESS}•${RESET} Element X support — msc4186_enabled: true added to Synapse"
     echo -e "  ${SUCCESS}•${RESET} Caddy/Traefik guided setup for existing proxy installs"
     echo -e "  ${SUCCESS}•${RESET} Caddy auto-install fix — premature reload removed"
     echo -e "  ${SUCCESS}•${RESET} Arch Linux fixes — IP detection and daemon.json write"
-    echo -e "  ${SUCCESS}•${RESET} LiveKit JWT port changed to ${INFO}8089${RESET} (Traefik conflict fix)"
+    echo -e "  ${SUCCESS}•${RESET} LiveKit JWT port changed to 8089 (Traefik conflict fix)"
     echo -e ""
-    echo -e "${ACCENT}v1.5${RESET}"
+    echo -e "${ACCENT}v1.5${RESET} — 2026-03-03"
     echo -e "${INFO}────────────────────────────────────────────${RESET}"
     echo -e ""
     echo -e "  ${SUCCESS}•${RESET} Pangolin reverse proxy support (Newt tunnel, zero open ports)"
@@ -3659,15 +3798,42 @@ scan_and_remove_matrix_resources() {
     # ── Paths to scan ────────────────────────────────────────────────────────
     local STACK_PATHS=(
         "/opt/stacks/matrix-stack"
+        "/opt/matrix-stack"
+        "$HOME/matrix-stack"
         "$(pwd)/matrix-stack"
     )
     if [ -n "$extra_dir" ] && [[ ! " ${STACK_PATHS[*]} " == *" $extra_dir "* ]]; then
         STACK_PATHS+=("$extra_dir")
     fi
+    
+    # Auto-detect paths from running containers (Docker volumes)
+    local container_paths
+    container_paths=$(docker inspect $(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E 'synapse|matrix-auth|livekit' 2>/dev/null) 2>/dev/null \
+        | grep -oP '"Source": "\K[^"]+(?=/(synapse|data|livekit))' 2>/dev/null | sort -u || true)
+    for cpath in $container_paths; do
+        if [[ ! " ${STACK_PATHS[*]} " == *" $cpath "* ]] && [ -d "$cpath" ]; then
+            # Check if this path is a subdirectory of an existing stack path
+            local is_subdir=false
+            for existing_path in "${STACK_PATHS[@]}"; do
+                if [[ "$cpath" == "$existing_path"/* ]]; then
+                    is_subdir=true
+                    break
+                fi
+            done
+            # Only add if not a subdirectory of an existing stack
+            if [ "$is_subdir" = false ]; then
+                STACK_PATHS+=("$cpath")
+            fi
+        fi
+    done
 
     SCAN_FOUND_RESOURCES=false
     SCAN_HAS_BLOCKER=false
     local RESOURCE_LIST=()
+    
+    # Track which stack directories have resources
+    declare -A STACK_DIR_RESOURCES
+    declare -A CONTAINER_TO_STACK  # Track which container belongs to which stack
 
     # ── Containers ───────────────────────────────────────────────────────────
     local MATRIX_IMAGES_PATTERN='matrixdotorg/synapse|element-hq/matrix-authentication-service|element-hq/element-call|element-hq/lk-jwt-service|matrix-org/sliding-sync|element-hq/element-admin|awesometechnologies/synapse-admin|vectorim/element-web|livekit/livekit-server|turt2live/matrix-media-repo|mautrix/'
@@ -3677,9 +3843,24 @@ scan_and_remove_matrix_resources() {
         NAME=$(echo "$line"   | cut -d'|' -f1)
         IMAGE=$(echo "$line"  | cut -d'|' -f2)
         STATUS=$(echo "$line" | cut -d'|' -f3)
+        # Skip bridge containers - they'll be listed under the directory
+        if [[ "$NAME" =~ ^matrix-bridge- ]] || [[ "$NAME" =~ ^mautrix- ]]; then
+            continue
+        fi
         if [ -n "$NAME" ]; then
             SCAN_FOUND_RESOURCES=true
             RESOURCE_LIST+=("container|$NAME|$IMAGE|$STATUS")
+            
+            # Try to determine which stack directory this container belongs to
+            local container_stack=""
+            local container_mounts=$(docker inspect "$NAME" --format '{{range .Mounts}}{{.Source}}|{{end}}' 2>/dev/null || true)
+            for stack_path in "${STACK_PATHS[@]}"; do
+                if echo "$container_mounts" | grep -q "^$stack_path"; then
+                    container_stack="$stack_path"
+                    CONTAINER_TO_STACK["$NAME"]="$container_stack"
+                    break
+                fi
+            done
         fi
     done < <(
         # 1. Containers from our own compose project
@@ -3764,6 +3945,7 @@ scan_and_remove_matrix_resources() {
         if [ -d "$path" ]; then
             SCAN_FOUND_RESOURCES=true
             RESOURCE_LIST+=("directory|$path")
+            STACK_DIR_RESOURCES["$path"]="true"  # Track this directory
             if [ -d "$path/bridges" ]; then
                 for bridge_dir in "$path/bridges"/*/; do
                     [ -d "$bridge_dir" ] && RESOURCE_LIST+=("bridge|$(basename "$bridge_dir")|$path/bridges/$(basename "$bridge_dir")")
@@ -3871,7 +4053,160 @@ scan_and_remove_matrix_resources() {
 
     # ── Prompt and remove ────────────────────────────────────────────────────
     if [ "$skip_prompt" != "true" ]; then
-        echo -ne "Remove ALL detected Docker resources listed above? (y/n): "
+        # Check if multiple stack directories are present
+        local num_stacks=${#STACK_DIR_RESOURCES[@]}
+        if [ $num_stacks -gt 1 ]; then
+            # Filter out subdirectories - only show root stack directories
+            declare -A root_stacks
+            for stack in "${!STACK_DIR_RESOURCES[@]}"; do
+                local is_subdir=false
+                for other_stack in "${!STACK_DIR_RESOURCES[@]}"; do
+                    if [[ "$stack" != "$other_stack" ]] && [[ "$stack" == "$other_stack"/* ]]; then
+                        is_subdir=true
+                        break
+                    fi
+                done
+                if [ "$is_subdir" = false ]; then
+                    root_stacks["$stack"]="true"
+                fi
+            done
+            
+            # If after filtering we only have one stack, don't show menu
+            if [ ${#root_stacks[@]} -le 1 ]; then
+                # Continue with cleanup as normal (no menu needed)
+                :
+            else
+                echo -e "\n${ACCENT}>> Multiple Matrix installations detected${RESET}\n"
+                
+                # Build whiptail checklist items with only root stacks
+                local stack_array=()
+                local checklist_items=()
+                for stack in "${!root_stacks[@]}"; do
+                    stack_array+=("$stack")
+                    checklist_items+=("$stack" "$stack" "ON")
+                done
+                
+                # Check if whiptail is available
+                if command -v whiptail &>/dev/null; then
+                    local DIALOG_CMD="whiptail"
+                elif command -v dialog &>/dev/null; then
+                    local DIALOG_CMD="dialog"
+                else
+                    DIALOG_CMD=""
+                fi
+                
+                local INSTALL_SELECTION=""
+                if [ -n "$DIALOG_CMD" ]; then
+                    INSTALL_SELECTION=$($DIALOG_CMD --title " Select Matrix Installations to Clean " \
+                        --checklist "Select which installations to remove (SPACE to toggle, ENTER to confirm):" \
+                        20 78 ${#root_stacks[@]} \
+                        "${checklist_items[@]}" \
+                        3>&1 1>&2 2>&3)
+                    
+                    local EXIT_CODE=$?
+                    unset NEWT_COLORS
+                    
+                    if [ $EXIT_CODE -ne 0 ]; then
+                        echo -e "\n   ${INFO}Selection cancelled — returning to menu.${RESET}"
+                        return 0
+                    fi
+                else
+                    # Fallback to text-based selection if whiptail not available
+                    echo -e "   ${INFO}Select which installations to clean:${RESET}\n"
+                    local idx=1
+                    for stack in "${stack_array[@]}"; do
+                        echo -e "   ${CHOICE_COLOR}[$idx]${RESET} ${CONFIG_PATH}$stack${RESET}"
+                        ((idx++))
+                    done
+                    echo ""
+                    echo -ne "Enter selection (e.g., 1 2 3 or 'a' for all, 'n' to cancel): ${WARNING}"
+                    read -r INSTALL_SELECTION
+                    echo -e "${RESET}"
+                fi
+                
+                # Build list of directories to keep/remove
+                declare -A dirs_to_remove
+                if [ -n "$INSTALL_SELECTION" ]; then
+                    if [ -n "$DIALOG_CMD" ]; then
+                        # Parse whiptail output (space-separated paths)
+                        for stack in $(echo $INSTALL_SELECTION | tr -d '"'); do
+                            dirs_to_remove["$stack"]="true"
+                        done
+                    else
+                        # Parse text-based selection
+                        if [[ "$INSTALL_SELECTION" == "a" ]] || [[ "$INSTALL_SELECTION" == "A" ]]; then
+                            for stack in "${stack_array[@]}"; do
+                                dirs_to_remove["$stack"]="true"
+                            done
+                        elif [[ "$INSTALL_SELECTION" == "n" ]] || [[ "$INSTALL_SELECTION" == "N" ]]; then
+                            return 0
+                        else
+                            for sel in $INSTALL_SELECTION; do
+                                if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -le ${#stack_array[@]} ]; then
+                                    dirs_to_remove["${stack_array[$((sel-1))]}"]="true"
+                                fi
+                            done
+                        fi
+                    fi
+                fi
+                
+                # If nothing selected via whiptail, return
+                if [ ${#dirs_to_remove[@]} -eq 0 ]; then
+                    echo -e "\n   ${WARNING}No installations selected — nothing to do.${RESET}"
+                    return 0
+                fi
+                
+                # Filter RESOURCE_LIST to only include selected directories and their resources
+                local filtered_list=()
+                for entry in "${RESOURCE_LIST[@]}"; do
+                    local entry_type=$(echo "$entry" | cut -d'|' -f1)
+                    if [[ "$entry_type" == "directory" ]]; then
+                        local entry_path=$(echo "$entry" | cut -d'|' -f2)
+                        [[ "${dirs_to_remove[$entry_path]}" == "true" ]] && filtered_list+=("$entry")
+                    elif [[ "$entry_type" == "container" ]]; then
+                        local container_name=$(echo "$entry" | cut -d'|' -f2)
+                        # Only include container if it belongs to a selected stack
+                        for selected_dir in "${!dirs_to_remove[@]}"; do
+                            if [[ "${CONTAINER_TO_STACK[$container_name]}" == "$selected_dir" ]] || [[ -z "${CONTAINER_TO_STACK[$container_name]}" ]]; then
+                                if [[ -n "${CONTAINER_TO_STACK[$container_name]}" ]] && [[ "${CONTAINER_TO_STACK[$container_name]}" == "$selected_dir" ]]; then
+                                    filtered_list+=("$entry")
+                                    break
+                                elif [[ -z "${CONTAINER_TO_STACK[$container_name]}" ]] && [ ${#dirs_to_remove[@]} -eq ${#root_stacks[@]} ]; then
+                                    filtered_list+=("$entry")
+                                    break
+                                fi
+                            fi
+                        done
+                    elif [[ "$entry_type" == "volume" ]]; then
+                        local vol=$(echo "$entry" | cut -d'|' -f2)
+                        local vol_used_by_selected=false
+                        for container_name in "${!CONTAINER_TO_STACK[@]}"; do
+                            if [[ "${dirs_to_remove[${CONTAINER_TO_STACK[$container_name]}]}" == "true" ]]; then
+                                vol_used_by_selected=true
+                                break
+                            fi
+                        done
+                        [[ "$vol_used_by_selected" == "true" ]] && filtered_list+=("$entry")
+                    elif [[ "$entry_type" == "network" ]]; then
+                        local net=$(echo "$entry" | cut -d'|' -f2)
+                        if [[ "$net" == "matrix-net" ]]; then
+                            [ ${#dirs_to_remove[@]} -gt 0 ] && filtered_list+=("$entry")
+                        fi
+                    elif [[ "$entry_type" == "bridge" ]]; then
+                        local bridge_path=$(echo "$entry" | cut -d'|' -f3)
+                        local bridge_dir=$(dirname "$bridge_path")
+                        for selected_dir in "${!dirs_to_remove[@]}"; do
+                            [[ "$bridge_dir" == "$selected_dir/bridges" ]] && filtered_list+=("$entry") && break
+                        done
+                    else
+                        filtered_list+=("$entry")
+                    fi
+                done
+                RESOURCE_LIST=("${filtered_list[@]}")
+            fi
+        fi
+        
+        echo -ne "Remove selected Docker resources listed above? (y/n): "
         read -r CLEAN_CONFIRM
         if [[ ! "$CLEAN_CONFIRM" =~ ^[Yy]$ ]]; then
             return 0
@@ -3927,6 +4262,21 @@ scan_and_remove_matrix_resources() {
             rm -rf "$dir" && echo -e "   ${REMOVED}✕${RESET} ${CONFIG_PATH}$dir${RESET} ${DOCKER_COLOR}(directory)${RESET}"
         done
 
+        # Cleanup bridge directories
+        local bridges_cleaned=()
+        for entry in "${RESOURCE_LIST[@]}"; do
+            [[ "$entry" == bridge\|* ]] || continue
+            local bridge_name bridge_path
+            bridge_name=$(echo "$entry" | cut -d'|' -f2)
+            bridge_path=$(echo "$entry" | cut -d'|' -f3)
+            rm -rf "$bridge_path" 2>/dev/null && bridges_cleaned+=("$bridge_name")
+        done
+        if [ ${#bridges_cleaned[@]} -gt 0 ]; then
+            for bridge in "${bridges_cleaned[@]}"; do
+                echo -e "   ${REMOVED}✕${RESET} ${ACCENT}$bridge${RESET} ${DOCKER_COLOR}(bridge)${RESET}"
+            done
+        fi
+
         echo -e "\n   ${SUCCESS}✓ All detected Matrix resources removed${RESET}"
     fi
 }
@@ -3960,7 +4310,7 @@ run_uninstall() {
         fi
     fi
     
-    UNINSTALL_DIR="/opt/stacks/matrix-stack"
+    UNINSTALL_DIR="${TARGET_DIR:-/opt/stacks/matrix-stack}"
     if [ -d "$UNINSTALL_DIR" ]; then
         echo -e "   ${SUCCESS}✓ Found installation at: ${INFO}$UNINSTALL_DIR${RESET}"
         
@@ -4310,11 +4660,7 @@ helpline=white,black
 
         # Database URI — bridge containers share the Docker network so use container name
         local _BRIDGE_DB="mautrix_${bridge}"
-        docker exec "$PG_CONTAINER" psql -U "$DB_USER" -tc \
-            "SELECT 1 FROM pg_database WHERE datname='$_BRIDGE_DB'" 2>/dev/null \
-            | grep -q 1 || \
-            docker exec "$PG_CONTAINER" psql -U "$DB_USER" \
-            -c "CREATE DATABASE $_BRIDGE_DB OWNER $DB_USER;" 2>/dev/null
+        # Note: databases are now created in PostgreSQL init script, not here.
         sed -i \
             -e "s|uri: postgres://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@$PG_CONTAINER/$_BRIDGE_DB?sslmode=disable|g" \
             -e "s|uri: postgresql://user:password@host/db|uri: postgresql://$DB_USER:$DB_PASS@$PG_CONTAINER/$_BRIDGE_DB?sslmode=disable|g" \
@@ -4476,6 +4822,140 @@ helpline=white,black
 }
 
 ################################################################################
+# DIAGNOSTICS FUNCTION                                                         #
+################################################################################
+
+run_diagnostics() {
+    draw_header
+    echo -e "\n${ACCENT}>> Collect System Diagnostics${RESET}\n"
+
+    local DIAG_DIR=""
+    # Try to determine installation path
+    if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then
+        DIAG_DIR="$TARGET_DIR"
+        echo -e "${INFO}Using installation path from session: ${SUCCESS}$DIAG_DIR${RESET}"
+    else
+        # Attempt to detect from running synapse container
+        local container_path
+        container_path=$(docker inspect synapse 2>/dev/null | python3 -c "import sys,json; mounts=json.load(sys.stdin)[0].get('Mounts',[]); [print(m['Source'].rstrip('/synapse')) for m in mounts if 'synapse' in m.get('Source','')]" 2>/dev/null | head -1)
+        if [ -n "$container_path" ] && [ -d "$container_path" ]; then
+            DIAG_DIR="$container_path"
+            echo -e "${INFO}Detected installation path from container: ${SUCCESS}$DIAG_DIR${RESET}"
+        else
+            # Check common paths
+            for p in "/opt/stacks/matrix-stack" "/opt/matrix-stack" "$HOME/matrix-stack" "$(pwd)/matrix-stack"; do
+                if [ -d "$p" ] && [ -f "$p/compose.yaml" -o -f "$p/docker-compose.yml" ]; then
+                    DIAG_DIR="$p"
+                    echo -e "${INFO}Found installation at common path: ${SUCCESS}$DIAG_DIR${RESET}"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    if [ -z "$DIAG_DIR" ]; then
+        echo -e "${WARNING}⚠️  Could not auto-detect installation path.${RESET}"
+        echo -ne "Enter path to matrix-stack directory (or leave empty to skip config files): ${WARNING}"
+        read -r DIAG_DIR
+        echo -e "${RESET}"
+        if [ -n "$DIAG_DIR" ] && [ ! -d "$DIAG_DIR" ]; then
+            echo -e "   ${WARNING}Directory not found. Proceeding without config files.${RESET}"
+            DIAG_DIR=""
+        fi
+    fi
+
+    echo -e "${ACCENT}Collecting diagnostics (this may take a few seconds)...${RESET}"
+    echo -e "${INFO} this will include:${RESET}"
+    echo
+
+    # Collect data
+    echo -e "${WARNING}- Docker versions${RESET}"
+    echo -e "${WARNING}- Container lists${RESET}"
+    echo -e "${WARNING}- Log tails (last 20 lines for each container)${RESET}"
+    echo -e "${WARNING}- Configuration file snippets${RESET}"
+    echo -e "${WARNING}- Network details${RESET}"
+    echo
+    local diag_data=""
+    diag_data+="=== Matrix Stack Diagnostics ===\n"
+    diag_data+="Generated: $(date)\n"
+    diag_data+="Script version: $SCRIPT_VERSION\n"
+    diag_data+="Installation path: ${DIAG_DIR:-Not found}\n\n"
+
+    diag_data+="--- Docker version ---\n"
+    diag_data+="$(docker --version 2>&1)\n"
+    diag_data+="--- Docker Compose version ---\n"
+    diag_data+="$(docker compose version 2>&1)\n\n"
+
+    diag_data+="--- All containers ---\n"
+    diag_data+="$(docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' 2>&1)\n\n"
+
+    # List of possible container names to check
+    local possible_containers=(
+        "synapse" "synapse-db" "matrix-auth" "livekit" "livekit-jwt" "element-web"
+        "element-call" "sliding-sync" "matrix-media-repo" "element-admin" "synapse-admin"
+        "matrix-bridge-discord" "matrix-bridge-telegram" "matrix-bridge-whatsapp"
+        "matrix-bridge-signal" "matrix-bridge-slack" "matrix-bridge-meta"
+    )
+
+    diag_data+="--- Last 20 lines of logs for key containers ---\n"
+    for c in "${possible_containers[@]}"; do
+        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^$c$"; then
+            diag_data+=">>> $c\n"
+            diag_data+="$(docker logs --tail 20 "$c" 2>&1)\n\n"
+        fi
+    done
+
+    if [ -n "$DIAG_DIR" ] && [ -d "$DIAG_DIR" ]; then
+        diag_data+="--- Configuration files (first 20 lines) ---\n"
+        for f in "$DIAG_DIR/synapse/homeserver.yaml" "$DIAG_DIR/mas/config.yaml" "$DIAG_DIR/livekit/livekit.yaml" "$DIAG_DIR/element-web/config.json"; do
+            if [ -f "$f" ]; then
+                diag_data+=">>> $f\n"
+                diag_data+="$(head -20 "$f" 2>&1)\n\n"
+            fi
+        done
+        # Compose file
+        if [ -f "$DIAG_DIR/compose.yaml" ]; then
+            diag_data+=">>> $DIAG_DIR/compose.yaml (first 50 lines)\n"
+            diag_data+="$(head -50 "$DIAG_DIR/compose.yaml" 2>&1)\n\n"
+        elif [ -f "$DIAG_DIR/docker-compose.yml" ]; then
+            diag_data+=">>> $DIAG_DIR/docker-compose.yml (first 50 lines)\n"
+            diag_data+="$(head -50 "$DIAG_DIR/docker-compose.yml" 2>&1)\n\n"
+        fi
+    fi
+
+    diag_data+="--- Docker network matrix-net ---\n"
+    diag_data+="$(docker network inspect matrix-net 2>&1)\n\n"
+
+    echo -e "${SUCCESS}Diagnostics collected.${RESET}\n"
+
+    # Ask to save
+    ask_yn SAVE_DIAG "Save diagnostics to a file? (y/n): " y
+    if [[ "$SAVE_DIAG" =~ ^[Yy]$ ]]; then
+        local default_path="${DIAG_DIR:-$PWD}/matrix-diagnostics-$(date +%Y%m%d-%H%M%S).txt"
+        while true; do
+            echo -ne "Enter path to save diagnostics: "
+            read -r -e -i "$default_path" DIAG_PATH
+            echo -e "\n${WARNING}Diagnostics will be saved to: ${CONFIG_PATH}${DIAG_PATH}${RESET}"
+            ask_yn CONFIRM_PATH "Confirm? (y/n): "
+            if [[ "$CONFIRM_PATH" =~ ^[Yy]$ ]]; then
+                break
+            fi
+            default_path="$DIAG_PATH"
+        done
+
+        mkdir -p "$(dirname "$DIAG_PATH")"
+        echo -e "$diag_data" > "$DIAG_PATH"
+        chmod 600 "$DIAG_PATH"
+        echo -e "${SUCCESS}✓ Diagnostics saved to: ${CONFIG_PATH}${DIAG_PATH}${RESET}"
+        echo -e "   ${WARNING}⚠️  This file may contain sensitive information. Handle with care.${RESET}"
+    fi
+
+    echo -e "\n${INFO}Press Enter to return to menu...${RESET}"
+    read -r
+}
+
+
+################################################################################
 # LOGS VIEWER FUNCTION                                                         #
 ################################################################################
 
@@ -4483,7 +4963,7 @@ run_logs() {
     draw_header
     echo -e "\n${ACCENT}>> View Container Logs${RESET}\n"
 
-    LOGS_DIR="/opt/stacks/matrix-stack"
+    LOGS_DIR="${TARGET_DIR:-/opt/stacks/matrix-stack}"
     if [ ! -d "$LOGS_DIR" ]; then
         echo -e "   ${WARNING}⚠️  Installation not found at default path${RESET}"
         echo -ne "   Enter path to matrix-stack directory: ${WARNING}"
@@ -4563,7 +5043,7 @@ run_verify() {
     draw_header
     echo -e "\n${ACCENT}>> Verify Matrix Stack Installation${RESET}\n"
     
-    VERIFY_DIR="/opt/stacks/matrix-stack"
+    VERIFY_DIR="${TARGET_DIR:-/opt/stacks/matrix-stack}"
     if [ ! -d "$VERIFY_DIR" ]; then
         echo -ne "   Enter path to matrix-stack directory: ${WARNING}"
         read -r VERIFY_DIR
@@ -4606,6 +5086,11 @@ main_deployment() {
         echo -e "${ERROR}[!] This script must be run as root (sudo).${RESET}"
         exit 1
     }
+    
+    # Initialize NPM port variables (will be updated if port conflicts detected)
+    NPM_HTTP_PORT=80
+    NPM_HTTPS_PORT=443
+    NPM_MGMT_PORT=81
 
     draw_header
 
@@ -4715,18 +5200,28 @@ main_deployment() {
     echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
     echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
     
-    ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
-    
-    if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
-        AUTO_PUBLIC_IP=$DETECTED_PUBLIC
-        AUTO_LOCAL_IP=$DETECTED_LOCAL
-    else
-        echo -ne "Enter Public IP: ${WARNING}"
+    # If automatic detection failed, ask manually
+    if [ -z "$DETECTED_PUBLIC" ] || [ -z "$DETECTED_LOCAL" ]; then
+        echo -e "\n${WARNING}⚠️  Automatic IP detection failed.${RESET}"
+        echo -ne "Enter Public IP manually: ${WARNING}"
         read -r AUTO_PUBLIC_IP
         echo -e "${RESET}"
-        echo -ne "Enter Local IP: ${WARNING}"
+        echo -ne "Enter Local IP manually: ${WARNING}"
         read -r AUTO_LOCAL_IP
         echo -e "${RESET}"
+    else
+        ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
+        if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
+            AUTO_PUBLIC_IP=$DETECTED_PUBLIC
+            AUTO_LOCAL_IP=$DETECTED_LOCAL
+        else
+            echo -ne "Enter Public IP: ${WARNING}"
+            read -r AUTO_PUBLIC_IP
+            echo -e "${RESET}"
+            echo -ne "Enter Local IP: ${WARNING}"
+            read -r AUTO_LOCAL_IP
+            echo -e "${RESET}"
+        fi
     fi
 
     ############################################################################
@@ -5433,6 +5928,56 @@ if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "cloudflare" ]] &
     echo -e "\n   ${WARNING}⚠️  This will add $PROXY_TYPE to your Docker stack and install it automatically.${RESET}"
 fi
 
+# Port conflict detection for NPM
+NPM_HTTP_PORT=80
+NPM_HTTPS_PORT=443
+NPM_MGMT_PORT=81
+
+if [[ "$PROXY_TYPE" == "npm" && "$PROXY_ALREADY_RUNNING" == "false" ]]; then
+    echo -e "\n${ACCENT}>> Checking for port conflicts...${RESET}"
+    
+    http_in_use=false
+    https_in_use=false
+    
+    if ss -lpn 2>/dev/null | grep -q ":80 "; then
+        http_in_use=true
+        echo -e "   ${WARNING}⚠️  Port 80 is in use (Caddy, Traefik, or other service detected)${RESET}"
+    fi
+    
+    if ss -lpn 2>/dev/null | grep -q ":443 "; then
+        https_in_use=true
+        echo -e "   ${WARNING}⚠️  Port 443 is in use (Caddy, Traefik, or other service detected)${RESET}"
+    fi
+    
+    # If ports are in use, find fallbacks
+    if [ "$http_in_use" = true ] || [ "$https_in_use" = true ]; then
+        echo -e "   ${INFO}NPM will use fallback ports to avoid conflicts.${RESET}"
+        
+        if [ "$http_in_use" = true ]; then
+            NPM_HTTP_PORT=$(find_available_port 8000)
+            if [ -z "$NPM_HTTP_PORT" ]; then
+                echo -e "   ${ERROR}✗ Could not find available port starting from 8000${RESET}"
+                exit 1
+            fi
+            echo -e "   ${SUCCESS}✓ NPM HTTP → port ${NPM_HTTP_PORT}${RESET}"
+        fi
+        
+        if [ "$https_in_use" = true ]; then
+            NPM_HTTPS_PORT=$(find_available_port 8443)
+            if [ -z "$NPM_HTTPS_PORT" ]; then
+                echo -e "   ${ERROR}✗ Could not find available port starting from 8443${RESET}"
+                exit 1
+            fi
+            echo -e "   ${SUCCESS}✓ NPM HTTPS → port ${NPM_HTTPS_PORT}${RESET}"
+        fi
+        
+        echo -e "   ${INFO}Management UI still runs on port 81 (http://$AUTO_LOCAL_IP:81)${RESET}"
+        echo -e "   ${WARNING}⚠️  Note: You'll need your proxy (Caddy/Traefik) to forward external traffic to these ports.${RESET}"
+    else
+        echo -e "   ${SUCCESS}✓ Ports 80 and 443 are available — NPM will use standard ports${RESET}"
+    fi
+fi
+
 # Pangolin-specific configuration
 if [[ "$PROXY_TYPE" == "pangolin" ]]; then
     echo -e "\n${ACCENT}Pangolin Configuration:${RESET}"
@@ -5576,14 +6121,8 @@ PROXY_IP="$AUTO_LOCAL_IP"
     echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE${RESET}"
 
     # ── Create bridge databases now that postgres is confirmed healthy ────
-    for bridge in "${SELECTED_BRIDGES[@]}"; do
-        local _BNAME="mautrix_${bridge}"
-        docker exec synapse-db psql -U "$DB_USER" -tc \
-            "SELECT 1 FROM pg_database WHERE datname='$_BNAME'" 2>/dev/null \
-            | grep -q 1 || \
-            docker exec synapse-db psql -U "$DB_USER" -q \
-            -c "CREATE DATABASE $_BNAME OWNER $DB_USER;" 2>/dev/null
-    done
+    # Note: Databases are now created in PostgreSQL init script, so this loop is removed.
+    # for bridge in "${SELECTED_BRIDGES[@]}"; do ... done  # removed
 
     # ── MAS (always required — must be healthy before Synapse) ───────────────
     echo -ne "\n${WARNING}>> Checking MAS (Auth Service)...${RESET}"
@@ -5636,7 +6175,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     # ── LiveKit JWT Service (always required) ────────────────────────────────
     echo -ne "\n${WARNING}>> Checking LiveKit JWT Service...${RESET}"
     TRIES=0
-    until curl -s -f "http://$AUTO_LOCAL_IP:8087" 2>/dev/null >/dev/null || \
+    until curl -s -f "http://$AUTO_LOCAL_IP:8089" 2>/dev/null >/dev/null || \
           docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^livekit-jwt$"; do
         echo -ne "."
         sleep 2
@@ -5702,8 +6241,9 @@ PROXY_IP="$AUTO_LOCAL_IP"
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         echo -ne "\n${WARNING}>> Checking Matrix Media Repo...${RESET}"
         TRIES=0
-        until curl -s -f "http://localhost:8013/_matrix/media/v3/config" 2>/dev/null >/dev/null || \
-              curl -s -f "http://localhost:8013/" 2>/dev/null >/dev/null; do
+        until curl -s -f "http://$AUTO_LOCAL_IP:8013/_matrix/media/v3/config" 2>/dev/null >/dev/null || \
+              curl -s -f "http://$AUTO_LOCAL_IP:8013/" 2>/dev/null >/dev/null || \
+              docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^matrix-media-repo$"; do
             echo -ne "."
             sleep 2
             ((TRIES++))
@@ -5983,11 +6523,12 @@ while true; do
     echo -e "   ${INFO}4)${RESET} ${SUCCESS}Verify${RESET}    — Check integrity of an existing installation"
     echo -e "   ${INFO}5)${RESET} ${SUCCESS}Bridges${RESET}   — Add or manage bridges to existing installation"
     echo -e "   ${INFO}6)${RESET} ${WARNING}Logs${RESET}      — View container logs for troubleshooting"
-    echo -e "   ${INFO}7)${RESET} ${CODE}Changelog${RESET} — View latest version changelog"
+    echo -e "   ${INFO}7)${RESET} ${BANNER}Diagnostics${RESET} — Collect system info for troubleshooting"
+    echo -e "   ${INFO}8)${RESET} ${CODE}Changelog${RESET} — View latest version changelog"
     echo -e ""
     echo -e "   ${INFO}0)${RESET} ${ERROR}Exit${RESET}"
     echo -e ""
-    ask_choice MENU_SELECT "Selection (0-7): " 0 1 2 3 4 5 6 7
+    ask_choice MENU_SELECT "Selection (0-8): " 0 1 2 3 4 5 6 7 8
 
     case $MENU_SELECT in
         0)
@@ -6002,7 +6543,7 @@ while true; do
         2)
             draw_header
             echo -e "\n${ACCENT}>> Update - Pull latest images and restart stack${RESET}"
-            UPDATE_STACK_DIR="/opt/stacks/matrix-stack"
+            UPDATE_STACK_DIR="${TARGET_DIR:-/opt/stacks/matrix-stack}"
             if [ ! -d "$UPDATE_STACK_DIR" ]; then
                 echo -ne "   Enter path to matrix-stack directory: ${WARNING}"
                 read -r UPDATE_STACK_DIR
@@ -6036,6 +6577,10 @@ while true; do
             draw_header
             ;;
         7)
+            run_diagnostics
+            draw_header
+            ;;
+        8)
             show_changelog
             draw_header
             ;;
