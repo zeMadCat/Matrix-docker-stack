@@ -2916,6 +2916,78 @@ TRAEFIKDYNEOF
 }
 
 # Display Nginx Proxy Manager setup guide
+show_vpn_setup_guide() {
+    cat << 'VPNGUIDEEOF'
+
+╔══════════════════════════════════════════════════════════════╗
+║          RUNNING MATRIX THROUGH A VPN/PROXY/TUNNEL           ║
+╚══════════════════════════════════════════════════════════════╝
+
+Federation and external access CAN work through a VPN. Here's how:
+
+STEP 1: Identify Your External IP
+────────────────────────────────
+This is the IP that external Matrix servers will connect to:
+  • If using VPN: Your exit node's public IP (NOT your tunnel IP)
+  • If using proxy: The proxy's public IP
+  • If using Wireguard: Your endpoint's IP
+  
+To find it: Go to https://ifconfig.me from your server
+Or run: curl ifconfig.me
+
+STEP 2: Set Up DNS A Records
+──────────────────────────────
+Your domain's DNS A records MUST point to your external IP:
+  
+  matrix.yourdomain.com          A    203.0.113.45      (external IP)
+  auth.yourdomain.com            A    203.0.113.45      (same IP)
+  element.yourdomain.com         A    203.0.113.45      (same IP)
+  livekit.yourdomain.com         A    203.0.113.45      (same IP)
+  turn.yourdomain.com            A    203.0.113.45      (same IP, DNS Only for TURN)
+
+NOT your VPN tunnel IP, NOT your local IP.
+
+STEP 3: Configure Reverse Proxy
+─────────────────────────────────
+Your reverse proxy (NPM, Caddy, Traefik) must listen on ALL interfaces:
+  • Nginx: Listen on 0.0.0.0:80 and 0.0.0.0:443
+  • Caddy: Listen on :80 and :443 (default is all interfaces)
+  • Traefik: entryPoints on 0.0.0.0:80 and 0.0.0.0:443
+
+STEP 4: Verify Connectivity
+──────────────────────────────
+After setup, test that external servers can reach you:
+
+  # From a server NOT on your network:
+  nslookup matrix.yourdomain.com
+  curl -I https://matrix.yourdomain.com/.well-known/matrix/server
+  
+  # Should return HTTP 200, not connection refused or timeout
+
+STEP 5: Monitor Logs
+──────────────────────
+After deployment, check Synapse logs for federation errors:
+  
+  docker logs synapse | grep -i "federation\|tls\|connection"
+
+COMMON ISSUES & FIXES
+─────────────────────
+
+Problem: "Federation not working"
+Fix: Check DNS A records point to correct external IP
+     Verify reverse proxy is listening on 0.0.0.0
+
+Problem: "Connection refused from external servers"
+Fix: Ensure ports 80/443 are forwarded through your VPN/proxy
+     Check firewall allows incoming connections
+
+Problem: "Certificate errors in federation"
+Fix: Ensure Let's Encrypt (or your CA) can reach your domain
+     .well-known files must be accessible from external IPs
+
+VPNGUIDEEOF
+}
+
 show_npm_guide() {
     clear
     echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
@@ -5187,11 +5259,27 @@ main_deployment() {
     ############################################################################
     
     echo -e "\n${ACCENT}>> Detecting network addresses...${RESET}"
-    echo -e "\n${WARNING}⚠️  IMPORTANT: VPN/Proxy/Tunnel Warning${RESET}"
-    echo -e "   ${INFO}If you are currently connected to a VPN, proxy, or tunnel:${RESET}"
-    echo -e "   ${WARNING}   • DISABLE it now, OR${RESET}"
-    echo -e "   ${WARNING}   • Enter your REAL PUBLIC IP when prompted (not the VPN IP)${RESET}"
-    echo -e "   ${WARNING}   Using a VPN/tunnel IP will break federation and external access!${RESET}"
+    
+    # Check if user is behind a VPN/proxy/tunnel
+    ask_yn USER_HAS_VPN "Are you currently running a VPN, proxy, or tunnel? (y/n): "
+    
+    if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
+        show_vpn_setup_guide
+        echo -e "\n${WARNING}⚠️  Important:${RESET}"
+        echo -e "   ${INFO}• You can still deploy through a VPN${RESET}"
+        echo -e "   ${INFO}• Federation and external access WILL work IF:${RESET}"
+        echo -e "   ${INFO}  1. You know your REAL external IP (VPN exit node IP)${RESET}"
+        echo -e "   ${INFO}  2. Your DNS A records point to this external IP${RESET}"
+        echo -e "   ${INFO}  3. Your reverse proxy listens on this external IP${RESET}"
+        echo -e ""
+    else
+        echo -e "   ${SUCCESS}✓ No VPN detected, proceeding with normal setup${RESET}"
+        echo -e ""
+    fi
+    
+    echo -e "\n${WARNING}⚠️  IMPORTANT: Use Correct IP${RESET}"
+    echo -e "   ${INFO}Enter the IP that EXTERNAL servers see (not your VPN tunnel IP)${RESET}"
+    echo -e "   ${INFO}This is typically your ISP's IP, exit node IP, or proxy IP${RESET}"
     echo -e ""
     
     if command -v curl >/dev/null 2>&1; then
@@ -5205,9 +5293,13 @@ main_deployment() {
     [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
     [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
     
-    echo -e "   ${INFO}Detected Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
-    echo -e "   ${INFO}Detected Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
-    echo -e "   ${INFO}(If these look wrong, you may be behind a VPN)${RESET}"
+    echo -e "   ${INFO}Detected External IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
+    echo -e "   ${INFO}Detected Local IP:${RESET}   ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
+    
+    if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
+        echo -e "   ${WARNING}(If external IP looks private like 10.x or 172.x, you're still behind VPN)${RESET}"
+    fi
+    echo -e ""
     
     # If automatic detection failed, ask manually
     if [ -z "$DETECTED_PUBLIC" ] || [ -z "$DETECTED_LOCAL" ]; then
