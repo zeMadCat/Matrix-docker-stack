@@ -1192,7 +1192,6 @@ room:
   auto_create: true
   empty_timeout: 300
 
-# Built-in TURN/STUN server
 turn:
   enabled: true
   domain: REPLACE_TURN_DOMAIN
