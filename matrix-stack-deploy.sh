@@ -5261,7 +5261,7 @@ main_deployment() {
     echo -e "\n${ACCENT}>> Detecting network addresses...${RESET}"
     
     # Check if user is behind a VPN/proxy/tunnel
-    ask_yn USER_HAS_VPN "Are you currently running a VPN, proxy, or tunnel? (y/n): "
+    ask_yn USER_HAS_VPN "Are you behind a VPN, proxy, or tunnel? (y/n): "
     
     if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
         show_vpn_setup_guide
