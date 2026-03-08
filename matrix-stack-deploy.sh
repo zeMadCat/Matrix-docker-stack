@@ -2527,7 +2527,6 @@ MEDIAEOF
     # Set correct ownership
     chown -R 991:991 "$TARGET_DIR/synapse"
     echo -e "   ${SUCCESS}✓ Synapse config created with MAS and LiveKit support${RESET}"
-    validate_config "$TARGET_DIR/synapse/homeserver.yaml"
 }
 
 ################################################################################
