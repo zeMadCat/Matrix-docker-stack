@@ -115,6 +115,10 @@ Optional bridges selected during install:
 - Docker + Docker Compose
 - A domain with DNS access
 - A reverse proxy (NPM, Caddy, Traefik, Cloudflare Tunnel, or Pangolin)
+- **⚠️ IMPORTANT — VPN Warning**: If using a VPN, proxy, or tunnel during setup:
+  - **Option 1**: Disable your VPN/proxy/tunnel while running the deployment script
+  - **Option 2**: Ensure you enter your REAL PUBLIC IP (not the VPN/tunnel IP) when prompted
+  - Using a VPN IP will break federation and external access to your Matrix server
 
 ---
 

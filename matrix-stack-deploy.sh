@@ -5185,6 +5185,12 @@ main_deployment() {
     ############################################################################
     
     echo -e "\n${ACCENT}>> Detecting network addresses...${RESET}"
+    echo -e "\n${WARNING}⚠️  IMPORTANT: VPN/Proxy/Tunnel Warning${RESET}"
+    echo -e "   ${INFO}If you are currently connected to a VPN, proxy, or tunnel:${RESET}"
+    echo -e "   ${WARNING}   • DISABLE it now, OR${RESET}"
+    echo -e "   ${WARNING}   • Enter your REAL PUBLIC IP when prompted (not the VPN IP)${RESET}"
+    echo -e "   ${WARNING}   Using a VPN/tunnel IP will break federation and external access!${RESET}"
+    echo -e ""
     
     if command -v curl >/dev/null 2>&1; then
         RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org 2>/dev/null || curl -sL --max-time 5 https://ifconfig.me/ip 2>/dev/null)
@@ -5197,8 +5203,9 @@ main_deployment() {
     [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
     [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
     
-    echo -e "   ${INFO}Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
-    echo -e "   ${INFO}Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
+    echo -e "   ${INFO}Detected Public IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
+    echo -e "   ${INFO}Detected Local IP:${RESET}  ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
+    echo -e "   ${INFO}(If these look wrong, you may be behind a VPN)${RESET}"
     
     # If automatic detection failed, ask manually
     if [ -z "$DETECTED_PUBLIC" ] || [ -z "$DETECTED_LOCAL" ]; then
