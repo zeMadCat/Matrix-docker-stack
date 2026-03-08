@@ -2917,6 +2917,7 @@ TRAEFIKDYNEOF
 
 # Display Nginx Proxy Manager setup guide
 show_vpn_setup_guide() {
+    # This will be called after IPs are detected, so we can use them
     cat << 'VPNGUIDEEOF'
 
 ╔══════════════════════════════════════════════════════════════╗
@@ -2931,22 +2932,27 @@ This is the IP that external Matrix servers will connect to:
   • If using VPN: Your exit node's public IP (NOT your tunnel IP)
   • If using proxy: The proxy's public IP
   • If using Wireguard: Your endpoint's IP
-  
+
 To find it: Go to https://ifconfig.me from your server
 Or run: curl ifconfig.me
 
 STEP 2: Set Up DNS A Records
 ──────────────────────────────
 Your domain's DNS A records MUST point to your external IP:
-  
-  matrix.yourdomain.com          A    203.0.113.45      (external IP)
-  auth.yourdomain.com            A    203.0.113.45      (same IP)
-  element.yourdomain.com         A    203.0.113.45      (same IP)
-  livekit.yourdomain.com         A    203.0.113.45      (same IP)
-  turn.yourdomain.com            A    203.0.113.45      (same IP, DNS Only for TURN)
 
-NOT your VPN tunnel IP, NOT your local IP.
+VPNGUIDEEOF
 
+    # Show actual detected IP in the guide
+    echo "  matrix.yourdomain.com          A    $DETECTED_PUBLIC      (your external IP)"
+    echo "  auth.yourdomain.com            A    $DETECTED_PUBLIC      (same IP)"
+    echo "  element.yourdomain.com         A    $DETECTED_PUBLIC      (same IP)"
+    echo "  livekit.yourdomain.com         A    $DETECTED_PUBLIC      (same IP)"
+    echo "  turn.yourdomain.com            A    $DETECTED_PUBLIC      (same IP, DNS Only for TURN)"
+    echo ""
+    echo "NOT your VPN tunnel IP, NOT your local IP ($DETECTED_LOCAL)."
+    echo ""
+    
+    cat << 'VPNGUIDEEOF2'
 STEP 3: Configure Reverse Proxy
 ─────────────────────────────────
 Your reverse proxy (NPM, Caddy, Traefik) must listen on ALL interfaces:
@@ -2985,7 +2991,7 @@ Problem: "Certificate errors in federation"
 Fix: Ensure Let's Encrypt (or your CA) can reach your domain
      .well-known files must be accessible from external IPs
 
-VPNGUIDEEOF
+VPNGUIDEEOF2
 }
 
 show_npm_guide() {
