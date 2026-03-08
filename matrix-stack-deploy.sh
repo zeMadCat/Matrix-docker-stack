@@ -5269,6 +5269,18 @@ main_deployment() {
     # Check if user is behind a VPN/proxy/tunnel
     ask_yn USER_HAS_VPN "Are you behind a VPN, proxy, or tunnel? (y/n): "
     
+    if command -v curl >/dev/null 2>&1; then
+        RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org 2>/dev/null || curl -sL --max-time 5 https://ifconfig.me/ip 2>/dev/null)
+    elif command -v wget >/dev/null 2>&1; then
+        RAW_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me/ip 2>/dev/null)
+    fi
+    
+    DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+    DETECTED_LOCAL=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)
+    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+    
+    # Now show VPN guide AFTER IPs are detected
     if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
         show_vpn_setup_guide
         echo -e "\n${WARNING}⚠️  Important:${RESET}"
@@ -5287,17 +5299,6 @@ main_deployment() {
     echo -e "   ${INFO}Enter the IP that EXTERNAL servers see (not your VPN tunnel IP)${RESET}"
     echo -e "   ${INFO}This is typically your ISP's IP, exit node IP, or proxy IP${RESET}"
     echo -e ""
-    
-    if command -v curl >/dev/null 2>&1; then
-        RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org 2>/dev/null || curl -sL --max-time 5 https://ifconfig.me/ip 2>/dev/null)
-    elif command -v wget >/dev/null 2>&1; then
-        RAW_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me/ip 2>/dev/null)
-    fi
-    
-    DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-    DETECTED_LOCAL=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)
-    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
     
     echo -e "   ${INFO}Detected External IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
     echo -e "   ${INFO}Detected Local IP:${RESET}   ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
