@@ -2,6 +2,66 @@ Matrix Synapse Full Stack Deployer — Changelog
 by MadCat
 ================================================================================
 
+v1.8 (2026-03-09)
+─────────────────
+Multi-Stack Support:
+  - Multiple independent stacks can now be installed on the same server, each
+    with its own containers, Docker network, ports, and data directory.
+  - Container name conflict detection: port offset and name offset are now
+    scanned independently; the higher of the two drives the suffix (-2, -3, …).
+  - Full container name list checked for conflicts: synapse, synapse-db,
+    matrix-auth, element-web, livekit, livekit-jwt, element-call, element-admin,
+    synapse-admin, sliding-sync, matrix-media-repo, coturn, proxy containers.
+  - Docker network name conflict detection: matrix-net suffix increments if
+    matrix-net already exists; name: field in compose correctly suffixed so
+    Docker does not prepend the project directory name.
+  - Bridge container names suffixed consistently (matrix-bridge-discord-2, etc.).
+  - All container_name: fields in optional feature snippets (_feat_add) now
+    receive the correct suffix when added to a non-primary stack.
+
+Reconfigure Menu:
+  - New reconfigure option in the main menu: modify domain, features, and
+    bridges on any installed stack without reinstalling.
+  - Multi-stack: whiptail checklist lets you select which stack(s) to reconfigure.
+  - Domain management: change base domain and all subdomains; optional subdomains
+    only shown if that service is installed.
+  - Feature management: whiptail checklist pre-selects currently installed
+    optional features; add or remove individually.
+  - Feature parsing fix: whiptail multi-word item output now correctly parsed
+    via eval array (was word-splitting "Element Admin" into two tokens).
+  - Bridge management: same whiptail flow as install-time bridge selection;
+    pre-selects installed bridges.
+
+Corrupt compose.yaml Auto-Repair:
+  - When re-adding a bridge that already exists in compose.yaml but the file
+    is corrupt (duplicate container_name keys), the script now detects the
+    corruption, removes the malformed service block with _compose_remove_svc,
+    and re-inserts a clean block instead of skipping silently.
+  - Applies to both manage_bridges (reconfigure path) and run_add_bridges
+    (install-time add bridges path).
+
+Verify Multi-Stack:
+  - run_verify() now auto-discovers all installed stacks.
+  - Single stack: proceeds directly. Multiple stacks: whiptail checklist to
+    select which to verify; runs checks sequentially with stack name header.
+  - Single "Press Enter" prompt at the end regardless of how many stacks verified.
+
+Cleanup Whiptail:
+  - Cleanup dialog now shows one entry per stack directory instead of listing
+    every individual container, network, volume, and port separately.
+  - Selecting a stack automatically includes all associated resources for removal.
+  - Container ownership determined by Docker mount path inspection.
+
+Other Fixes:
+  - Element Call: resolved MISSING_MATRIX_RTC_FOCUS and MISSING_MATRIX_RTC_TRANSPORT
+    errors by correcting Element Call config and reverse proxy settings.
+  - CREATE DATABASE psql output suppressed (stdout was leaking to terminal).
+  - Domain input prompts: label text now prints in normal color; only the
+    typed input portion is highlighted yellow.
+  - All whiptail menus use consistent color scheme (green checkboxes, white/black).
+
+================================================================================
+
 v1.7 (2026-03-08)
 ─────────────────
   - JSON + YAML config validation: validate_yaml() renamed to validate_config(),

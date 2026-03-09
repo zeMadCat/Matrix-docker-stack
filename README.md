@@ -9,6 +9,19 @@
 > **Changelog**
 >
 > <details open>
+> <summary><strong>v1.8</strong> — 2026-03-09</summary>
+>
+> - **Multi-stack support** — install multiple independent stacks on one server; each gets its own containers, network, and ports
+> - **Container & network name conflict detection** — auto-appends `-2`, `-3`, etc. when names are already in use, independent of port offset
+> - **Reconfigure menu** — modify domain, features and bridges on any installed stack post-install
+> - **Verify multi-stack** — select which stack(s) to verify via whiptail; runs checks one by one
+> - **Corrupt compose.yaml auto-repair** — detects and repairs duplicate service blocks when re-adding bridges
+> - **Cleanup whiptail shows stacks only** — one checkbox per stack; all associated resources cleaned automatically
+> - **Element Call fix** — resolved `MISSING_MATRIX_RTC_FOCUS` and `MISSING_MATRIX_RTC_TRANSPORT` errors via config and proxy corrections
+>
+> </details>
+>
+> <details>
 > <summary><strong>v1.7</strong> — 2026-03-08</summary>
 >
 > - **Bridge error messages** — show log file paths and last 5 lines of output
@@ -165,9 +178,10 @@ The script checks GitHub for a newer version before showing the menu. If one is 
 │                      │  • Pangolin VPS Support               │
 │  * = optional        │  • Easy Setup                         │
 │                      │  • Multi-Screenshare                  │
+│                      │  • Multi-Stack Support                │
 │                      │                                       │
 ├──────────────────────────────────────────────────────────────┤
-│                    Script Version: v1.7                      │
+│                    Script Version: v1.8                      │
 └──────────────────────────────────────────────────────────────┘
 
  What would you like to do?
