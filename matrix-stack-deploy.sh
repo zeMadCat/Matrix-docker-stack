@@ -1381,6 +1381,8 @@ turn:
   tls_port: 5349
   udp_port: 3478
   external_tls: true
+  relay_range_start: 50000
+  relay_range_end: 50050
 LIVEKITEOF
 
     # Replace placeholders with proper escaping for sed special characters
