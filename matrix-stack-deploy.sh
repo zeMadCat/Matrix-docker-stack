@@ -3651,15 +3651,6 @@ LKCONF
         echo -e "${ACCENT}Advanced Tab ${INFO}(copy everything inside the box):${RESET}"
         print_code << CALLCONF
 # Element Call - iframe widget, requires CORS and frame embedding
-proxy_http_version 1.1;
-proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection "upgrade";
-proxy_set_header Host \$host;
-proxy_set_header X-Real-IP \$remote_addr;
-proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-proxy_set_header X-Forwarded-Proto \$scheme;
-proxy_read_timeout 86400;
-proxy_send_timeout 86400;
 proxy_hide_header Access-Control-Allow-Origin;
 proxy_hide_header Access-Control-Allow-Methods;
 proxy_hide_header Access-Control-Allow-Headers;
@@ -3667,6 +3658,11 @@ add_header Access-Control-Allow-Origin * always;
 add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
 add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
 add_header X-Frame-Options "ALLOWALL" always;
+proxy_http_version 1.1;
+proxy_set_header Host \$host;
+proxy_set_header X-Real-IP \$remote_addr;
+proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto \$scheme;
 
 # Route JWT service requests to livekit-jwt on the stack
 location /sfu/get {
