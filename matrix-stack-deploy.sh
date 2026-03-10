@@ -473,7 +473,7 @@ save_credentials_prompt() {
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit HTTP" "TCP" "7880" "$AUTO_LOCAL_IP:7880"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit RTC" "UDP" "7882" "$AUTO_LOCAL_IP:7882"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit JWT" "TCP" "8089" "$AUTO_LOCAL_IP:8089"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit Range" "UDP" "50000-50050" "$AUTO_LOCAL_IP"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit Range" "UDP" "50000-50500" "$AUTO_LOCAL_IP"
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Call" "TCP" "8007" "$AUTO_LOCAL_IP:8007"
     fi
@@ -559,8 +559,9 @@ save_credentials_prompt() {
     exec >&3
     exec 3>&-
 
-    # Restrict permissions immediately
+    # Strip ANSI color codes from saved file, then restrict permissions
     if [ -f "$CREDS_PATH" ]; then
+        sed -i 's/\x1b\[[0-9;]*m//g' "$CREDS_PATH"
         chmod 600 "$CREDS_PATH"
     fi
 
@@ -813,7 +814,7 @@ draw_footer() {
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit HTTP" "TCP" "7880" "$AUTO_LOCAL_IP:7880"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit RTC" "UDP" "7882" "$AUTO_LOCAL_IP:7882"
     printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit JWT" "TCP" "8089" "$AUTO_LOCAL_IP:8089"
-    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit Range" "UDP" "50000-50050" "$AUTO_LOCAL_IP"
+    printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "LiveKit Range" "UDP" "50000-50500" "$AUTO_LOCAL_IP"
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         printf "   │ ${DNS_HOSTNAME}%-15s${RESET} │ ${DNS_TYPE}%-9s${RESET} │ ${PUBLIC_IP_COLOR}%-15s${RESET} │ ${LOCAL_IP_COLOR}%-21s${RESET} │\n" "Element Call" "TCP" "8007" "$AUTO_LOCAL_IP:8007"
     fi
@@ -1357,11 +1358,10 @@ bind_addresses:
 
 rtc:
   port_range_start: 50000
-  port_range_end: 50050
-  use_external_ip: true
+  port_range_end: 50500
+  use_external_ip: false
   udp_port: 7882
   tcp_port: 7881
-  REPLACE_NODE_IP_CONFIG
 
 keys:
   "REPLACE_LK_API_KEY": "REPLACE_LK_API_SECRET"
@@ -1382,7 +1382,7 @@ turn:
   udp_port: 3478
   external_tls: true
   relay_range_start: 50000
-  relay_range_end: 50050
+  relay_range_end: 50500
 LIVEKITEOF
 
     # Replace placeholders with proper escaping for sed special characters
@@ -1391,11 +1391,9 @@ LIVEKITEOF
     sed -i "s|REPLACE_LK_API_KEY|$LK_API_KEY_ESCAPED|g" "$TARGET_DIR/livekit/livekit.yaml"
     sed -i "s|REPLACE_LK_API_SECRET|$LK_API_SECRET_ESCAPED|g" "$TARGET_DIR/livekit/livekit.yaml"
     
-    # Configure node_ip based on dual-stack setting
+    # Configure node_ip as CLI flag in compose for dual-stack (config-file node_ip is ignored by livekit-server)
     if [[ "$LIVEKIT_DUAL_STACK" == "true" ]]; then
-        sed -i "s|REPLACE_NODE_IP_CONFIG|node_ip: $AUTO_LOCAL_IP|g" "$TARGET_DIR/livekit/livekit.yaml"
-    else
-        sed -i "s|REPLACE_NODE_IP_CONFIG||g" "$TARGET_DIR/livekit/livekit.yaml"
+        sed -i "s|command: --config /etc/livekit.yaml|command: --config /etc/livekit.yaml --node-ip $AUTO_LOCAL_IP|g" "$TARGET_DIR/compose.yaml"
     fi
     
     if [[ "$PROXY_TYPE" == "pangolin" ]]; then
@@ -2501,7 +2499,7 @@ COMPOSEEOF
       - "3478:3478/udp"
       - "3478:3478/tcp"
       - "5349:5349/tcp"
-      - "50000-50050:50000-50050/udp"
+      - "50000-50500:50000-50500/udp"
 PORTSEOF
         
         # Insert temp file content and remove placeholder
