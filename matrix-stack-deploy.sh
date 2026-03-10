@@ -7941,8 +7941,8 @@ main_deployment() {
 
     # Redirect all subsequent output to both console and log file
     # This captures the entire deployment process
-    exec 1> >(tee -a "$LOG_FILE")
-    exec 2> >(tee -a "$LOG_FILE" >&2)
+    exec 1> >(tee >(sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"))
+    exec 2> >(tee >(sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE") >&2)
 
     # Create remaining directory structure
     mkdir -p "$TARGET_DIR/synapse" \
