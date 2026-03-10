@@ -291,8 +291,9 @@ save_credentials_prompt() {
 
     # Write credentials file — matches the on-screen output format exactly
     mkdir -p "$(dirname "$CREDS_PATH")"
-
-    # BRIDGE SETUP SECTION
+    # Redirect stdout to file for everything below until we restore it
+    exec 3>&1
+    exec > "$CREDS_PATH"
     if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
         echo -e "${BANNER}════════════════════════════════════════════════════════════════════════════════════════${RESET}"
         echo -e "${BANNER}═════════════════════════════════════ BRIDGE SETUP ═════════════════════════════════════${RESET}"
@@ -554,8 +555,14 @@ save_credentials_prompt() {
     echo "     !!! SAVE THIS DATA IMMEDIATELY! NOT STORED ELSEWHERE. !!!"
     echo "══════════════════════════════════════════════════════════════════"
 
+    # Restore stdout
+    exec >&3
+    exec 3>&-
+
     # Restrict permissions immediately
-    chmod 600 "$CREDS_PATH"
+    if [ -f "$CREDS_PATH" ]; then
+        chmod 600 "$CREDS_PATH"
+    fi
 
     echo -e "\n${SUCCESS}✓ Credentials saved to: ${CONFIG_PATH}${CREDS_PATH}${RESET}"
     echo -e "   ${SUCCESS}✓ File permissions set to 600 (owner read/write only)${RESET}"
@@ -1718,13 +1725,12 @@ generate_bridge_configs() {
 
                 # --- Step 3: Patch initial connectivity ---
                 sed -i "s|domain: example.com|domain: $DOMAIN|g" "$CONFIG_FILE" 2>/dev/null
-                sed -i "s|address: https://matrix.example.com|address: https://$DOMAIN|g" "$CONFIG_FILE" 2>/dev/null
-                sed -i "s|address: https://example.com|address: https://$DOMAIN|g" "$CONFIG_FILE" 2>/dev/null
+                sed -i "s|address: https://matrix.example.com|address: http://synapse:8008|g" "$CONFIG_FILE" 2>/dev/null
+                sed -i "s|address: https://example.com|address: http://synapse:8008|g" "$CONFIG_FILE" 2>/dev/null
 
                 # Ensure homeserver section is clean and correct
-                # Use public domain URL for MAS compatibility (Issue #1020)
                 sed -i '/^homeserver:/,/^[^[:space:]]/d' "$CONFIG_FILE"
-                echo -e "\nhomeserver:\n    address: https://$DOMAIN\n    domain: $DOMAIN" >> "$CONFIG_FILE"
+                echo -e "\nhomeserver:\n    address: http://synapse:8008\n    domain: $DOMAIN" >> "$CONFIG_FILE"
                 
                 # Special database patching for telegram bridge
                 if [ "$bridge" = "telegram" ]; then
@@ -4470,13 +4476,15 @@ scan_and_remove_matrix_resources() {
                    | awk '{print $NF}' | grep -oP 'pid=\K[0-9]+' | head -1)
             proc_name=""
             [ -n "$proc" ] && proc_name=$(cat /proc/$proc/comm 2>/dev/null || echo "unknown")
+            # Skip if it's a known Matrix container process — not a system-level blocker
+            [[ "$proc_name" == "livekit-server" || "$proc_name" == "synapse" || "$proc_name" == "coturn" ]] && continue
             SCAN_FOUND_RESOURCES=true
             HAS_PORT_CONFLICT=true
             RESOURCE_LIST+=("port|$port|${proc_name:-unknown}")
         fi
     done
 
-    # Count how many distinct stack directories have resources (for whiptail decision)
+    # ── Count directories ────────────────────────────────────────────────────
     local _DIR_COUNT=0
     for _e in "${RESOURCE_LIST[@]}"; do
         [[ "${_e%%|*}" == "directory" ]] && ((_DIR_COUNT++)) || true
