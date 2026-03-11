@@ -549,7 +549,11 @@ save_credentials_prompt() {
 
     # Log rotation and final warning
     echo "══════════════════════════════════════════════════════════════════"
-    echo "   ✓  Log rotation: ENABLED (logs managed automatically)"
+    if [[ "$SETUP_LOG_ROTATION" =~ ^[Yy]$ ]]; then
+        echo "   ✓  Log rotation: ENABLED (logs managed automatically)"
+    else
+        echo "   ⚠  Log rotation: DISABLED (monitor disk space manually)"
+    fi
     echo ""
     echo "══════════════════════════════════════════════════════════════════"
     echo "     !!! SAVE THIS DATA IMMEDIATELY! NOT STORED ELSEWHERE. !!!"
@@ -572,6 +576,82 @@ save_credentials_prompt() {
 
 # Display deployment completion footer with all credentials and configuration
 draw_footer() {
+    # Bridge setup instructions — printed FIRST so they appear above credentials
+    if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
+        echo -e "\n${ACCENT}════════════════════════════════════════════════════════════════════════════════════════${RESET}"
+        echo -e "${ACCENT}═════════════════════════════════════ BRIDGE SETUP ═════════════════════════════════════${RESET}"
+        echo -e "${ACCENT}════════════════════════════════════════════════════════════════════════════════════════${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Bridges installed: ${SUCCESS}${SELECTED_BRIDGES[*]}${RESET}"
+        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Bridges need a few minutes to fully start before use.${RESET}"
+        echo -e "\n   ${ACCENT}How to activate each bridge:${RESET}"
+        echo -e "   ${INFO}1. Open Element Web: https://$SUB_ELEMENT.$DOMAIN${RESET}"
+        echo -e "   ${INFO}2. Start a new Direct Message (DM) with the bot user below${RESET}"
+        echo -e "   ${INFO}3. The bot must appear in search — if not, wait 1-2 min and retry${RESET}"
+        echo -e "   ${INFO}4. Send the command shown to begin the login flow${RESET}"
+        echo -e ""
+        for bridge in "${SELECTED_BRIDGES[@]}"; do
+            case $bridge in
+                discord)
+                    echo -e "   ${SUCCESS}── Discord ──────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @discordbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Follow the link the bot sends — log in via browser"
+                    echo -e "   ${INFO}Step 3:${RESET}    Authorize the bot, paste the token back if prompted"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/discord/authentication.html"
+                    echo -e ""
+                    ;;
+                telegram)
+                    echo -e "   ${SUCCESS}── Telegram ─────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @telegrambot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Enter your phone number when prompted"
+                    echo -e "   ${INFO}Step 3:${RESET}    Enter the code Telegram sends you"
+                    echo -e "   ${INFO}2FA:${RESET}       Enter your Telegram password if 2FA is enabled"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/python/telegram/authentication.html"
+                    echo -e ""
+                    ;;
+                whatsapp)
+                    echo -e "   ${SUCCESS}── WhatsApp ─────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @whatsappbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    The bot will send a QR code — scan it with WhatsApp"
+                    echo -e "   ${INFO}           (WhatsApp → Linked Devices → Link a Device)${RESET}"
+                    echo -e "   ${INFO}Note:${RESET}      Your phone must stay online (it's a web bridge)"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/whatsapp/authentication.html"
+                    echo -e ""
+                    ;;
+                signal)
+                    echo -e "   ${SUCCESS}── Signal ───────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @signalbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}link${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    The bot sends a link — open it, scan QR in Signal"
+                    echo -e "   ${INFO}           (Signal → Settings → Linked Devices → +)${RESET}"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/signal/authentication.html"
+                    echo -e ""
+                    ;;
+                slack)
+                    echo -e "   ${SUCCESS}── Slack ────────────────────────────────────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @slackbot:$DOMAIN"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Follow the OAuth link to authorize your Slack workspace"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/slack/authentication.html"
+                    echo -e ""
+                    ;;
+                meta)
+                    echo -e "   ${SUCCESS}── Meta (Facebook Messenger / Instagram) ─────────────${RESET}"
+                    echo -e "   ${INFO}Bot user:${RESET}  @instagrambot:$DOMAIN (Instagram) or @facebookbot:$DOMAIN (Messenger)"
+                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
+                    echo -e "   ${INFO}Step 2:${RESET}    Open instagram.com or facebook.com in a private browser window"
+                    echo -e "   ${INFO}Step 3:${RESET}    Open DevTools → Network tab → filter XHR → search 'graphql'"
+                    echo -e "   ${INFO}Step 4:${RESET}    Log in, right-click a request → Copy as cURL → paste to bot"
+                    echo -e "   ${WARNING}Note:${RESET}      Meta actively restricts automation — use at own risk"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/meta/authentication.html"
+                    echo -e ""
+                    ;;
+            esac
+        done
+    fi
+
     echo -e "\n${SUCCESS}┌──────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${SUCCESS}│                      DEPLOYMENT COMPLETE                     │${RESET}"
     echo -e "${SUCCESS}└──────────────────────────────────────────────────────────────┘${RESET}"
@@ -892,82 +972,6 @@ draw_footer() {
         echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  To use S3 storage: edit ${TARGET_DIR}/media-repo/config.yaml → datastores section${RESET}"
     fi
     
-    # Bridge setup instructions
-    if [ ${#SELECTED_BRIDGES[@]} -gt 0 ]; then
-        echo -e "\n${ACCENT}════════════════════════════════════════════════════════════════════════════════════════${RESET}"
-echo -e "${ACCENT}══════════════════════════════ BRIDGE SETUP ════════════════════════════════════════════${RESET}"
-echo -e "${ACCENT}════════════════════════════════════════════════════════════════════════════════════════${RESET}"
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Bridges installed: ${SUCCESS}${SELECTED_BRIDGES[*]}${RESET}"
-        echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Bridges need a few minutes to fully start before use.${RESET}"
-        echo -e "\n   ${ACCENT}How to activate each bridge:${RESET}"
-        echo -e "   ${INFO}1. Open Element Web: https://$SUB_ELEMENT.$DOMAIN${RESET}"
-        echo -e "   ${INFO}2. Start a new Direct Message (DM) with the bot user below${RESET}"
-        echo -e "   ${INFO}3. The bot must appear in search — if not, wait 1-2 min and retry${RESET}"
-        echo -e "   ${INFO}4. Send the command shown to begin the login flow${RESET}"
-        echo -e ""
-        for bridge in "${SELECTED_BRIDGES[@]}"; do
-            case $bridge in
-                discord)
-                    echo -e "   ${SUCCESS}── Discord ──────────────────────────────────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @discordbot:$DOMAIN"
-                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    Follow the link the bot sends — log in via browser"
-                    echo -e "   ${INFO}Step 3:${RESET}    Authorize the bot, paste the token back if prompted"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/discord/authentication.html"
-                    echo -e ""
-                    ;;
-                telegram)
-                    echo -e "   ${SUCCESS}── Telegram ─────────────────────────────────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @telegrambot:$DOMAIN"
-                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    Enter your phone number when prompted"
-                    echo -e "   ${INFO}Step 3:${RESET}    Enter the code Telegram sends you"
-                    echo -e "   ${INFO}2FA:${RESET}       Enter your Telegram password if 2FA is enabled"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/python/telegram/authentication.html"
-                    echo -e ""
-                    ;;
-                whatsapp)
-                    echo -e "   ${SUCCESS}── WhatsApp ─────────────────────────────────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @whatsappbot:$DOMAIN"
-                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    The bot will send a QR code — scan it with WhatsApp"
-                    echo -e "   ${INFO}           (WhatsApp → Linked Devices → Link a Device)${RESET}"
-                    echo -e "   ${INFO}Note:${RESET}      Your phone must stay online (it's a web bridge)"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/whatsapp/authentication.html"
-                    echo -e ""
-                    ;;
-                signal)
-                    echo -e "   ${SUCCESS}── Signal ───────────────────────────────────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @signalbot:$DOMAIN"
-                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}link${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    The bot sends a link — open it, scan QR in Signal"
-                    echo -e "   ${INFO}           (Signal → Settings → Linked Devices → +)${RESET}"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/signal/authentication.html"
-                    echo -e ""
-                    ;;
-                slack)
-                    echo -e "   ${SUCCESS}── Slack ────────────────────────────────────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @slackbot:$DOMAIN"
-                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    Follow the OAuth link to authorize your Slack workspace"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/slack/authentication.html"
-                    echo -e ""
-                    ;;
-                meta)
-                    echo -e "   ${SUCCESS}── Meta (Facebook Messenger / Instagram) ─────────────${RESET}"
-                    echo -e "   ${INFO}Bot user:${RESET}  @instagrambot:$DOMAIN (Instagram) or @facebookbot:$DOMAIN (Messenger)"
-                    echo -e "   ${INFO}Step 1:${RESET}    Send: ${WARNING}login${RESET}"
-                    echo -e "   ${INFO}Step 2:${RESET}    Open instagram.com or facebook.com in a private browser window"
-                    echo -e "   ${INFO}Step 3:${RESET}    Open DevTools → Network tab → filter XHR → search 'graphql'"
-                    echo -e "   ${INFO}Step 4:${RESET}    Log in, right-click a request → Copy as cURL → paste to bot"
-                    echo -e "   ${WARNING}Note:${RESET}      Meta actively restricts automation — use at own risk"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/meta/authentication.html"
-                    echo -e ""
-                    ;;
-            esac
-        done
-    fi
-
     # Log rotation status
     if [[ "$SETUP_LOG_ROTATION" =~ ^[Yy]$ ]]; then
         echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Log rotation: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (logs managed automatically)${RESET}"
@@ -978,7 +982,34 @@ echo -e "${ACCENT}════════════════════�
     # Final warning
     echo -e "\n${WARNING}══════════════════════════════════════════════════════════════════${RESET}"
     echo -e "${WARNING}     !!! SAVE THIS DATA IMMEDIATELY! NOT STORED ELSEWHERE. !!!    ${RESET}"
-    echo -e "${WARNING}══════════════════════════════════════════════════════════════════${RESET}\n"
+    echo -e "${WARNING}══════════════════════════════════════════════════════════════════${RESET}"
+
+    # Prompt to save credentials before the restart notice
+    save_credentials_prompt
+
+    # Restart prompt — wait for user to finish setup before bringing stack up cleanly
+    echo -e ""
+    echo -e "${WARNING}████████████████████████████████████████████████████████████████████${RESET}"
+    echo -e "${WARNING}█                                                                  █${RESET}"
+    echo -e "${WARNING}█   ACTION REQUIRED BEFORE CONTINUING:                            █${RESET}"
+    echo -e "${WARNING}█                                                                  █${RESET}"
+    echo -e "${WARNING}█   ↑  SCROLL UP AND READ THE FULL SUMMARY ABOVE FIRST  ↑         █${RESET}"
+    echo -e "${WARNING}█                                                                  █${RESET}"
+    echo -e "${WARNING}█   1. Configure your reverse proxy (NPM / Caddy / Traefik)       █${RESET}"
+    echo -e "${WARNING}█   2. Set up all DNS records listed above                        █${RESET}"
+    echo -e "${WARNING}█   3. Configure port forwarding on your router                   █${RESET}"
+    echo -e "${WARNING}█                                                                  █${RESET}"
+    echo -e "${WARNING}█   Once all three steps are done, press [ENTER] to restart       █${RESET}"
+    echo -e "${WARNING}█   the full Docker stack and apply all configurations.           █${RESET}"
+    echo -e "${WARNING}█                                                                  █${RESET}"
+    echo -e "${WARNING}████████████████████████████████████████████████████████████████████${RESET}"
+    echo -e ""
+    echo -ne "${ACCENT}   Press [ENTER] when ready to restart the stack...${RESET} "
+    read -r _
+    echo -e ""
+    echo -e "   ${INFO}Restarting Docker stack...${RESET}"
+    cd "$TARGET_DIR" && docker compose -f "$(basename "$COMPOSE_FILE")" down && docker compose -f "$(basename "$COMPOSE_FILE")" up -d
+    echo -e "   ${SUCCESS}✓ Stack restarted successfully.${RESET}\n"
 }
 
 ################################################################################
@@ -1391,10 +1422,7 @@ LIVEKITEOF
     sed -i "s|REPLACE_LK_API_KEY|$LK_API_KEY_ESCAPED|g" "$TARGET_DIR/livekit/livekit.yaml"
     sed -i "s|REPLACE_LK_API_SECRET|$LK_API_SECRET_ESCAPED|g" "$TARGET_DIR/livekit/livekit.yaml"
     
-    # Configure node_ip as CLI flag in compose for dual-stack (config-file node_ip is ignored by livekit-server)
-    if [[ "$LIVEKIT_DUAL_STACK" == "true" ]]; then
-        sed -i "s|command: --config /etc/livekit.yaml|command: --config /etc/livekit.yaml --node-ip $AUTO_LOCAL_IP|g" "$TARGET_DIR/compose.yaml"
-    fi
+
     
     if [[ "$PROXY_TYPE" == "pangolin" ]]; then
         # Pangolin: TURN runs on the VPS, use its IP directly
@@ -2487,6 +2515,8 @@ COMPOSEEOF
         sed -i "s|REPLACE_LIVEKIT_NETWORK_MODE|network_mode: host|g" "$TARGET_DIR/compose.yaml"
         sed -i "s|REPLACE_LIVEKIT_PORTS||g" "$TARGET_DIR/compose.yaml"
         sed -i "s|REPLACE_LIVEKIT_NETWORKS||g" "$TARGET_DIR/compose.yaml"
+        # Inject --node-ip as CLI flag (config-file node_ip is ignored by livekit-server)
+        sed -i "s|command: --config /etc/livekit.yaml|command: --config /etc/livekit.yaml --node-ip $AUTO_LOCAL_IP|g" "$TARGET_DIR/compose.yaml"
     else
         # Use bridge network with explicit port mapping for LAN only
         sed -i "s|REPLACE_LIVEKIT_NETWORK_MODE||g" "$TARGET_DIR/compose.yaml"
@@ -8661,41 +8691,68 @@ PROXY_IP="$AUTO_LOCAL_IP"
     # STEP 7: Generate All Configuration Files                                #
     ############################################################################
 
+    log_section "STEP 7: Generating Configuration Files"
+    log_message "Domain: $DOMAIN | Server name: $SERVER_NAME | Admin user: $ADMIN_USER"
+    log_message "Proxy type: $PROXY_TYPE | Proxy already running: $PROXY_ALREADY_RUNNING"
+    log_message "Bridges selected: ${SELECTED_BRIDGES[*]:-none}"
+    log_message "Optional services — Sliding sync: $SLIDING_SYNC_ENABLED | Media repo: $MEDIA_REPO_ENABLED | Element Call: $ELEMENT_CALL_ENABLED | Element Admin: $ELEMENT_ADMIN_ENABLED | Synapse Admin: $SYNAPSE_ADMIN_ENABLED"
+    log_message "Public IP: $AUTO_PUBLIC_IP | Local IP: $AUTO_LOCAL_IP"
+
     # Create optional service directories now that we know what's enabled
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         mkdir -p "$TARGET_DIR/element-call"
     fi
 
     generate_livekit_config
+    log_message "LiveKit config written: $TARGET_DIR/livekit/livekit.yaml"
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         generate_element_call_config
+        log_message "Element Call config written: $TARGET_DIR/element-call/config.json"
     fi
     if [[ "$MEDIA_REPO_ENABLED" == "true" ]]; then
         generate_media_repo_config
+        log_message "Matrix Media Repo config written"
     fi
     generate_element_web_config
+    log_message "Element Web config written"
     generate_mas_config
+    log_message "MAS config written: $TARGET_DIR/mas/config.yaml"
     generate_postgres_init
+    log_message "PostgreSQL init scripts written"
     generate_docker_compose
+    log_message "Docker Compose file written: $COMPOSE_FILE"
     generate_synapse_config
+    log_message "Synapse homeserver.yaml written: $TARGET_DIR/synapse/homeserver.yaml"
     generate_bridge_configs
+    log_message "Bridge appservice configs written (if any)"
     generate_wellknown_files
+    log_message "Well-known files written"
     if [ "$PROXY_ALREADY_RUNNING" = false ] && [[ "$PROXY_TYPE" != "pangolin" ]]; then
         setup_nginx_wellknown
+        log_message "nginx well-known serving configured"
     fi
 
     # Write proxy config files before containers start (Caddy/Traefik need them at boot)
     if [[ "$PROXY_ALREADY_RUNNING" == "false" ]]; then
         case "$PROXY_TYPE" in
-            caddy)   caddy_autosetup ;;
-            traefik) traefik_autosetup ;;
+            caddy)
+                caddy_autosetup
+                log_message "Caddy Caddyfile written: $TARGET_DIR/caddy/Caddyfile"
+                ;;
+            traefik)
+                traefik_autosetup
+                log_message "Traefik configs written: $TARGET_DIR/traefik/"
+                ;;
         esac
     fi
 
     ############################################################################
     # STEP 8: Deploy Stack                                                    #
     ############################################################################
-    
+
+    log_section "STEP 8: Launching Docker Stack"
+    log_message "Running: docker compose down --remove-orphans (cleanup)"
+
     echo -e "\n${SUCCESS}>> Launching Matrix Stack...${RESET}"
     
     # Export all port variables for docker-compose
@@ -8706,7 +8763,9 @@ PROXY_IP="$AUTO_LOCAL_IP"
     # Clean up any orphaned containers first
     cd "$TARGET_DIR" && docker compose down --remove-orphans 2>/dev/null || true
     
+    log_message "Running: docker compose up -d"
     cd "$TARGET_DIR" && docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
+    log_message "docker compose up -d completed — waiting for PostgreSQL init"
     
     # Brief pause for Docker networking and PostgreSQL init scripts
     # (PostgreSQL needs ~10-15s to create all 3 databases via init scripts)
@@ -8716,7 +8775,8 @@ PROXY_IP="$AUTO_LOCAL_IP"
     ############################################################################
     # STEP 8.5: Comprehensive Health Checks                                   #
     ############################################################################
-    
+
+    log_section "STEP 8.5: Health Checks"
     echo -e "\n${ACCENT}>> Performing health checks for installed services...${RESET}"
 
     local HEALTH_FAILED=false
@@ -8736,8 +8796,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE${RESET}"
-
-    # ── Create bridge databases now that postgres is confirmed healthy ────
+    log_message "PostgreSQL — ONLINE"
     # Note: Databases are now created in PostgreSQL init script, so this loop is removed.
     # for bridge in "${SELECTED_BRIDGES[@]}"; do ... done  # removed
 
@@ -8757,8 +8816,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ MAS (Auth Service) — ONLINE${RESET}"
-
-    # ── Synapse (always required) ────────────────────────────────────────────
+    log_message "MAS (Auth Service) — ONLINE"
     echo -ne "\n${WARNING}>> Checking Synapse...${RESET}"
     TRIES=0
     until curl -sL --fail "http://$AUTO_LOCAL_IP:$PORT_SYNAPSE/_matrix/client/versions" 2>/dev/null | grep -q "versions"; do
@@ -8773,6 +8831,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ Synapse — ONLINE${RESET}"
+    log_message "Synapse — ONLINE"
 
     # ── LiveKit SFU (always required) ────────────────────────────────────────
     echo -ne "\n${WARNING}>> Checking LiveKit SFU...${RESET}"
@@ -8787,7 +8846,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             break
         fi
     done
-    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE${RESET}"
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE${RESET}" && log_message "LiveKit SFU — ONLINE"
 
     # ── LiveKit JWT Service (always required) ────────────────────────────────
     echo -ne "\n${WARNING}>> Checking LiveKit JWT Service...${RESET}"
@@ -8803,7 +8862,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             break
         fi
     done
-    [[ $TRIES -lt 20 ]] && echo -e "\n${SUCCESS}✓ LiveKit JWT Service — ONLINE${RESET}"
+    [[ $TRIES -lt 20 ]] && echo -e "\n${SUCCESS}✓ LiveKit JWT Service — ONLINE${RESET}" && log_message "LiveKit JWT Service — ONLINE"
 
     # ── Element Web (always required) ────────────────────────────────────────
     echo -ne "\n${WARNING}>> Checking Element Web...${RESET}"
@@ -8818,9 +8877,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             break
         fi
     done
-    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Element Web — ONLINE${RESET}"
-
-    # ── Element Call (optional) ──────────────────────────────────────────────
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Element Web — ONLINE${RESET}" && log_message "Element Web — ONLINE"
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         echo -ne "\n${WARNING}>> Checking Element Call...${RESET}"
         TRIES=0
@@ -8975,7 +9032,10 @@ PROXY_IP="$AUTO_LOCAL_IP"
     ############################################################################
     # STEP 9: Create Admin User via MAS                                       #
     ############################################################################
-    
+
+    log_section "STEP 9: Create Admin User via MAS"
+    log_message "Registering admin user: $ADMIN_USER on $SERVER_NAME"
+
     echo -e "\n${SUCCESS}>> Creating Admin user via MAS...${RESET}"
     
     # Wait for Synapse to fully initialize MAS endpoints
@@ -9002,15 +9062,19 @@ PROXY_IP="$AUTO_LOCAL_IP"
     if echo "$REGISTER_OUTPUT" | grep -qiE "success|registered|created|user.*added"; then
         echo -e "${SUCCESS}✓ Admin user created: @$ADMIN_USER:$SERVER_NAME${RESET}"
         echo -e "${SUCCESS}✓ User has admin privileges${RESET}"
+        log_message "Admin user created successfully: @$ADMIN_USER:$SERVER_NAME"
     elif echo "$REGISTER_OUTPUT" | grep -qi "already exists"; then
         echo -e "${INFO}ℹ  User already exists: @$ADMIN_USER:$SERVER_NAME${RESET}"
+        log_message "Admin user already exists: @$ADMIN_USER:$SERVER_NAME — ensuring admin privileges"
         # Try to ensure admin privileges
         echo -e "${INFO}   Ensuring admin privileges...${RESET}"
         docker exec matrix-auth mas-cli manage promote-admin "$ADMIN_USER" 2>&1 >/dev/null
         echo -e "${SUCCESS}✓ Admin privileges confirmed${RESET}"
+        log_message "Admin privileges confirmed for $ADMIN_USER"
     else
         echo -e "${ERROR}✗ Failed to register user. Output:${RESET}"
         echo "$REGISTER_OUTPUT"
+        log_message "ERROR: Failed to register admin user. Output: $REGISTER_OUTPUT"
         echo -e "\n${INFO}Create the admin user manually:${RESET}"
         echo -e "   ${WARNING}docker exec matrix-auth mas-cli manage register-user $ADMIN_USER --password YOUR_PASSWORD --admin --yes${RESET}"
         echo -e "   Or via web: ${WARNING}https://$SUB_MAS.$DOMAIN${RESET}"
@@ -9046,6 +9110,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     # STEP 10: Display Proxy Configuration Guides                             #
     ############################################################################
 
+    log_section "STEP 10: Proxy Configuration Guides"
     if [[ "$PROXY_TYPE" == "npm" ]]; then
         if [[ "$PROXY_ALREADY_RUNNING" == "false" ]]; then
             # Auto-installed: NPM is up but proxy hosts still need to be created manually
@@ -9117,9 +9182,28 @@ PROXY_IP="$AUTO_LOCAL_IP"
     ############################################################################
     # STEP 11: Display Deployment Summary                                     #
     ############################################################################
-    
+
+    log_section "STEP 11: Deployment Complete"
+    log_message "Matrix server: $SERVER_NAME | Admin user: @$ADMIN_USER:$SERVER_NAME"
+    log_message "Element Web: https://$SUB_ELEMENT.$DOMAIN"
+    log_message "MAS (Auth): https://$SUB_MAS.$DOMAIN"
+    log_message "Matrix API: https://$SUB_MATRIX.$DOMAIN"
+    [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]] && log_message "Element Admin: https://$SUB_ELEMENT_ADMIN.$DOMAIN"
+    [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]] && log_message "Synapse Admin: https://$SUB_SYNAPSE_ADMIN.$DOMAIN"
+    [[ "$ELEMENT_CALL_ENABLED" == "true" ]] && log_message "Element Call: https://$SUB_CALL.$DOMAIN"
+    [[ "$SLIDING_SYNC_ENABLED" == "true" ]] && log_message "Sliding Sync: https://$SUB_SLIDING_SYNC.$DOMAIN"
+    [[ "$MEDIA_REPO_ENABLED" == "true" ]] && log_message "Media Repo: https://$SUB_MEDIA_REPO.$DOMAIN"
+    log_message "Bridges installed: ${SELECTED_BRIDGES[*]:-none}"
+    log_message "Log rotation: $SETUP_LOG_ROTATION"
+    log_message "Deployment log written to: $LOG_FILE"
+    log_message "────────────────────────────────────────────────────────────────────"
+    log_message "Stack is up — awaiting user to configure reverse proxy and DNS before final restart"
+
+    # Stop tee redirect before interactive prompts — keeps log clean
+    exec 1>&-; exec 2>&-
+    exec 1>/dev/tty; exec 2>/dev/tty
+
     draw_footer
-    save_credentials_prompt
 }
 
 ################################################################################
