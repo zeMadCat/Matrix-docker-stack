@@ -23,7 +23,7 @@
 #  • Matrix Media Repo (advanced media handling)                               #
 #                                                                              #
 #  Bridges Available:                                                          #
-#  • Discord • Telegram • WhatsApp • Signal • Slack • Instagram                #
+#  • Discord • Telegram (awaiting Go release) • WhatsApp • Signal • Slack • Instagram  #
 #                                                                              #
 #  Features:                                                                   #
 #  • Reverse Proxy guides (NPM, Caddy, Traefik, Cloudflare, Pangolin)          #
@@ -162,8 +162,9 @@ ask_yn() {
         echo -ne "$_prompt"
         read -r _input
         _input="${_input:-$_default}"
-        case "$_input" in
-            [Yy]|[Nn]) break ;;
+        case "${_input,,}" in
+            y|yes) _input="y"; break ;;
+            n|no)  _input="n"; break ;;
             *) echo -e "   ${ERROR}Please answer y or n.${RESET}" ;;
         esac
     done
@@ -231,25 +232,24 @@ draw_header() {
     clear
     echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BANNER}│              MATRIX SYNAPSE FULL STACK DEPLOYER              │${RESET}"
-    echo -e "${BANNER}│                         by MadCat                            │${RESET}"
-    echo -e "${BANNER}├──────────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "${BANNER}│  CORE                │  BRIDGES                              │${RESET}"
-    echo -e "${BANNER}│  ───────────         │  ───────────                          │${RESET}"
-    echo -e "${BANNER}│  • Synapse           │  - Discord     - Telegram             │${RESET}"
-    echo -e "${BANNER}│  • MAS               │  - WhatsApp    - Signal               │${RESET}"
-    echo -e "${BANNER}│  • LiveKit           │  - Slack       - Meta (FB/Instagram)  │${RESET}"
-    echo -e "${BANNER}│  • LiveKit JWT       │                                       │${RESET}"
-    echo -e "${BANNER}│  • PostgreSQL        │  FEATURES                             │${RESET}"
-    echo -e "${BANNER}│  • Element Call *    │  ───────────                          │${RESET}"
-    echo -e "${BANNER}│  • Admin Panel *     │  • Dynamic Config                     │${RESET}"
-    echo -e "${BANNER}│  • Sliding Sync *    │  • User Input Based                   │${RESET}"
-    echo -e "${BANNER}│  • Media Repo *      │  • Reverse Proxy Guides               │${RESET}"
-    echo -e "${BANNER}│                      │  • Pangolin VPS Support               │${RESET}"
-    echo -e "${BANNER}│  * = optional        │  • Easy Setup                         │${RESET}"
-    echo -e "${BANNER}│                      │  • Multi-Screenshare                  │${RESET}"
-    echo -e "${BANNER}│                      │  • Multi-Stack Support                │${RESET}"
-    echo -e "${BANNER}├──────────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "${BANNER}│                    ${WARNING}Script Version:${SUCCESS} v${SCRIPT_VERSION}${RESET}${BANNER}                      │${RESET}"
+    echo -e "${BANNER}│                          by MadCat                           │${RESET}"
+    echo -e "${BANNER}├───────────────────────┬──────────────────────────────────────┤${RESET}"
+    echo -e "${BANNER}│  CORE SERVICES        │  BRIDGES                             │${RESET}"
+    echo -e "${BANNER}│  • Synapse            │  ${SUCCESS}✔${BANNER} Discord                           │${RESET}"
+    echo -e "${BANNER}│  • MAS (Auth)         │  ${SUCCESS}✔${BANNER} WhatsApp                          │${RESET}"
+    echo -e "${BANNER}│  • LiveKit + JWT      │  ${SUCCESS}✔${BANNER} Signal                            │${RESET}"
+    echo -e "${BANNER}│  • PostgreSQL         │  ${SUCCESS}✔${BANNER} Slack                             │${RESET}"
+    echo -e "${BANNER}│  • Element Web        │  ${SUCCESS}✔${BANNER} Meta (FB / Instagram)             │${RESET}"
+    echo -e "${BANNER}│                       │  ${WARNING}⏸️${BANNER} Telegram (waiting for Go ver.)    │${RESET}"
+    echo -e "${BANNER}├───────────────────────┼──────────────────────────────────────┤${RESET}"
+    echo -e "${BANNER}│  OPTIONAL             │  FEATURES                            │${RESET}"
+    echo -e "${BANNER}│  * Element Call       │  • Multi-stack support               │${RESET}"
+    echo -e "${BANNER}│  * Admin Panel        │  • Reverse proxy guides              │${RESET}"
+    echo -e "${BANNER}│  * Sliding Sync       │  • Pangolin VPS support              │${RESET}"
+    echo -e "${BANNER}│  * Media Repo         │  • Dynamic user-input config         │${RESET}"
+    echo -e "${BANNER}│                       │  • Multi-screenshare                 │${RESET}"
+    echo -e "${BANNER}├───────────────────────┴──────────────────────────────────────┤${RESET}"
+    echo -e "${BANNER}│                     ${WARNING}Script Version: ${SUCCESS}v${SCRIPT_VERSION}${BANNER}                     │${RESET}"
     echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
     echo ""
 }
@@ -264,8 +264,7 @@ save_credentials_prompt() {
     echo -e "   ${INFO}Only do this on a machine you fully control. Restrict file permissions${RESET}"
     echo -e "   ${INFO}and delete the file once you have stored the credentials securely.${RESET}"
     echo ""
-    echo -ne "${ACCENT}Would you like to save all credentials to a file? (y/n):${RESET} "
-    read -r SAVE_CREDS
+    ask_yn SAVE_CREDS "${ACCENT}Would you like to save all credentials to a file? (y/n):${RESET} "
     if [[ ! "$SAVE_CREDS" =~ ^[Yy]$ ]]; then
         echo -e "   ${INFO}Credentials not saved.${RESET}"
         return
@@ -282,8 +281,7 @@ save_credentials_prompt() {
     echo ""
     echo -e "${WARNING}Credentials will be saved to:${RESET}"
     echo -e "   ${CONFIG_PATH}${CREDS_PATH}${RESET}"
-    echo -ne "${ACCENT}Confirm? (y/n):${RESET} "
-    read -r CONFIRM_PATH
+    ask_yn CONFIRM_PATH "${ACCENT}Confirm? (y/n):${RESET} "
     if [[ ! "$CONFIRM_PATH" =~ ^[Yy]$ ]]; then
         echo -e "   ${INFO}Cancelled — credentials not saved.${RESET}"
         return
@@ -526,7 +524,7 @@ save_credentials_prompt() {
     if [[ "$MAS_REGISTRATION" == "true" ]]; then
         echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} — users can sign up at https://$SUB_MAS.$DOMAIN/account/${RESET}"
     else
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — use CLI: ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --yes${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — see User Management commands above to create users${RESET}"
     fi
     if [[ "$SLIDING_SYNC_ENABLED" == "true" ]]; then
         echo -e "   ${NOTE_ICON}${SUCCESS}✓${RESET}${NOTE_TEXT}  Sliding Sync: ${SUCCESS}ENABLED${RESET}${NOTE_TEXT} (modern client support)${RESET}"
@@ -957,7 +955,7 @@ draw_footer() {
             echo -e "   ${NOTE_ICON}${WARNING}⚠️${RESET}${NOTE_TEXT}  Add reCAPTCHA keys to ${CONFIG_PATH}${TARGET_DIR}/mas/config.yaml${RESET}"
         fi
     else
-        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — use CLI: ${WARNING}docker exec matrix-auth mas-cli manage register-user USERNAME --password PASSWORD --yes${RESET}"
+        echo -e "   ${NOTE_ICON}${INFO}ℹ${RESET}${NOTE_TEXT}  Registration: ${ERROR}DISABLED${RESET}${NOTE_TEXT} — see User Management commands above to create users${RESET}"
     fi
     
     # Sliding Sync note
@@ -1008,8 +1006,17 @@ draw_footer() {
     read -r _
     echo -e ""
     echo -e "   ${INFO}Restarting Docker stack...${RESET}"
-    cd "$TARGET_DIR" && docker compose -f "$(basename "$COMPOSE_FILE")" down && docker compose -f "$(basename "$COMPOSE_FILE")" up -d
-    echo -e "   ${SUCCESS}✓ Stack restarted successfully.${RESET}\n"
+    if [ -z "$TARGET_DIR" ] || [ ! -d "$TARGET_DIR" ]; then
+        echo -e "   ${ERROR}✗ Installation path not found — cannot restart stack automatically.${RESET}"
+        echo -e "   ${INFO}Run manually: cd /path/to/matrix-stack && docker compose down && docker compose up -d${RESET}"
+    else
+        cd "$TARGET_DIR" || { echo -e "   ${ERROR}✗ Could not cd to $TARGET_DIR${RESET}"; return 1; }
+        echo -e "   ${INFO}Stopping containers...${RESET}"
+        docker compose down --remove-orphans </dev/tty >/dev/tty 2>/dev/tty
+        echo -e "   ${INFO}Starting containers...${RESET}"
+        docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
+        echo -e "   ${SUCCESS}✓ Stack restarted successfully.${RESET}\n"
+    fi
 }
 
 ################################################################################
@@ -1091,8 +1098,7 @@ check_for_updates() {
         echo -e "   ${INFO}Current version: v${SCRIPT_VERSION}${RESET}"
         echo -e "   ${INFO}Latest version:  v${LATEST_VERSION}${RESET}"
         echo -e "\n${WARNING}A newer version (v${LATEST_VERSION}) is available!${RESET}"
-        echo -ne "Update now? (y/n): "
-        read -r UPDATE_CONFIRM
+        ask_yn UPDATE_CONFIRM "Update now? (y/n): "
         
         if [[ "$UPDATE_CONFIRM" =~ ^[Yy]$ ]]; then
             echo -e "\n${ACCENT}>> Downloading latest version...${RESET}"
@@ -1102,8 +1108,25 @@ check_for_updates() {
             echo -e "   ${INFO}Backup created at $backup_file${RESET}"
             
             local temp_file="${0}.tmp"
+            local checksum_file="${0}.tmp.sha256"
             if curl -sL "https://raw.githubusercontent.com/$GITHUB_REPO/$GITHUB_BRANCH/matrix-stack-deploy.sh" -o "$temp_file"; then
+                # Attempt to fetch published checksum (gracefully skipped if not found)
+                curl -sL "https://raw.githubusercontent.com/$GITHUB_REPO/$GITHUB_BRANCH/matrix-stack-deploy.sh.sha256" -o "$checksum_file" 2>/dev/null
                 if [ -s "$temp_file" ]; then
+                    if [ -s "$checksum_file" ]; then
+                        local expected_hash actual_hash
+                        expected_hash=$(awk '{print $1}' "$checksum_file")
+                        actual_hash=$(sha256sum "$temp_file" | awk '{print $1}')
+                        if [ "$expected_hash" != "$actual_hash" ]; then
+                            echo -e "   ${ERROR}✗ Checksum mismatch — update aborted (file may be corrupted or tampered).${RESET}"
+                            rm -f "$temp_file" "$checksum_file"
+                            return 1
+                        fi
+                        echo -e "   ${SUCCESS}✓ Checksum verified${RESET}"
+                    else
+                        echo -e "   ${WARNING}⚠  No checksum file published — skipping verification${RESET}"
+                    fi
+                    rm -f "$checksum_file"
                     mv "$temp_file" "$0"
                     chmod +x "$0"
                     echo -e "   ${SUCCESS}✓ Update successful!${RESET}"
@@ -1112,12 +1135,12 @@ check_for_updates() {
                     exec "$0"
                 else
                     echo -e "   ${ERROR}Downloaded file is empty. Update failed.${RESET}"
-                    rm -f "$temp_file"
+                    rm -f "$temp_file" "$checksum_file"
                     return 1
                 fi
             else
                 echo -e "   ${ERROR}Failed to download update.${RESET}"
-                rm -f "$temp_file"
+                rm -f "$temp_file" "$checksum_file"
                 return 1
             fi
         else
@@ -1167,8 +1190,7 @@ check_for_updates() {
         echo -e "   ${WARNING}Only run scripts obtained directly from the official repo:${RESET}"
         echo -e "   ${SUCCESS}https://github.com/$GITHUB_REPO${RESET}"
         echo -e ""
-        echo -ne "   ${WARNING}Continue anyway? (y/n): ${RESET}"
-        read -r UNOFFICIAL_CONFIRM
+        ask_yn UNOFFICIAL_CONFIRM "   ${WARNING}Continue anyway? (y/n): ${RESET}"
         if [[ ! "$UNOFFICIAL_CONFIRM" =~ ^[Yy]$ ]]; then
             echo -e "\n   ${INFO}Exiting. Download the official script from:${RESET}"
             echo -e "   ${SUCCESS}https://github.com/$GITHUB_REPO${RESET}"
@@ -1390,7 +1412,7 @@ bind_addresses:
 rtc:
   port_range_start: 50000
   port_range_end: 50500
-  use_external_ip: false
+  use_external_ip: true
   udp_port: 7882
   tcp_port: 7881
 
@@ -1999,13 +2021,13 @@ EOF
     echo -e "   ${INFO}ℹ  These files need to be served from: https://$DOMAIN/.well-known/matrix/{server,client}${RESET}"
     case "$PROXY_TYPE" in
         npm)
-            echo -e "   ${INFO}   These are already included in the NPM Advanced Tab config shown in the setup guide below.${RESET}"
+            echo -e "   ${INFO}   These are already included in the NPM Advanced Tab config shown in the proxy setup guide later in the script.${RESET}"
             ;;
         caddy)
-            echo -e "   ${INFO}   These are already included in the Caddyfile config shown in the setup guide below.${RESET}"
+            echo -e "   ${INFO}   These are already included in the Caddyfile config shown in the proxy setup guide later in the script.${RESET}"
             ;;
         traefik)
-            echo -e "   ${INFO}   These are already included in the Traefik dynamic config shown in the setup guide below.${RESET}"
+            echo -e "   ${INFO}   These are already included in the Traefik dynamic config shown in the proxy setup guide later in the script.${RESET}"
             ;;
         pangolin)
             echo -e "   ${INFO}   Configure Pangolin to route $DOMAIN/.well-known/matrix/ to http://$AUTO_LOCAL_IP:80${RESET}"
@@ -2108,7 +2130,12 @@ generate_mas_config() {
       - authorization_code
       - refresh_token
     response_types:
-      - code"
+      - code
+    allowed_scopes:
+      - openid
+      - email
+      - urn:mas:admin
+      - \"urn:matrix:org.matrix.msc2967.client:api:*\""
     fi
 
     cat > "$TARGET_DIR/mas/config.yaml" << EOF
@@ -2468,12 +2495,19 @@ networks:
 COMPOSEEOF
 
     # Replace placeholders with actual values
-    sed -i "s/REPLACE_DB_PASS/$DB_PASS/g" "$TARGET_DIR/compose.yaml"
+    # Escape special sed characters (/, \, &) in secrets before substitution
+    local DB_PASS_ESC REG_SECRET_ESC MAS_SECRET_ESC LK_API_KEY_ESC LK_API_SECRET_ESC
+    DB_PASS_ESC=$(printf '%s\n' "$DB_PASS" | sed -e 's/[\/&]/\\&/g')
+    REG_SECRET_ESC=$(printf '%s\n' "$REG_SECRET" | sed -e 's/[\/&]/\\&/g')
+    MAS_SECRET_ESC=$(printf '%s\n' "$MAS_SECRET" | sed -e 's/[\/&]/\\&/g')
+    LK_API_KEY_ESC=$(printf '%s\n' "$LK_API_KEY" | sed -e 's/[\/&]/\\&/g')
+    LK_API_SECRET_ESC=$(printf '%s\n' "$LK_API_SECRET" | sed -e 's/[\/&]/\\&/g')
+    sed -i "s/REPLACE_DB_PASS/$DB_PASS_ESC/g" "$TARGET_DIR/compose.yaml"
     sed -i "s/MAS_ADMIN_PORT_PLACEHOLDER/$MAS_ADMIN_PORT/g" "$TARGET_DIR/compose.yaml"
     sed -i "s/REPLACE_SUB_LIVEKIT/$SUB_LIVEKIT/g" "$TARGET_DIR/compose.yaml"
     sed -i "s/REPLACE_DOMAIN/$DOMAIN/g" "$TARGET_DIR/compose.yaml"
-    sed -i "s/REPLACE_LK_API_KEY/$LK_API_KEY/g" "$TARGET_DIR/compose.yaml"
-    sed -i "s/REPLACE_LK_API_SECRET/$LK_API_SECRET/g" "$TARGET_DIR/compose.yaml"
+    sed -i "s/REPLACE_LK_API_KEY/$LK_API_KEY_ESC/g" "$TARGET_DIR/compose.yaml"
+    sed -i "s/REPLACE_LK_API_SECRET/$LK_API_SECRET_ESC/g" "$TARGET_DIR/compose.yaml"
     
     # Apply container name suffix (if PORT_OFFSET > 0)
     if [ -n "$CONTAINER_SUFFIX" ]; then
@@ -3374,82 +3408,91 @@ TRAEFIKDYNEOF
 
 # Display Nginx Proxy Manager setup guide
 show_vpn_setup_guide() {
-    # This will be called after IPs are detected, so we can use them
-    cat << 'VPNGUIDEEOF'
+    clear
+    echo -e "${BANNER}┌──────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BANNER}│         RUNNING MATRIX THROUGH A VPN / PROXY / TUNNEL        │${RESET}"
+    echo -e "${BANNER}└──────────────────────────────────────────────────────────────┘${RESET}"
 
-╔══════════════════════════════════════════════════════════════╗
-║          RUNNING MATRIX THROUGH A VPN/PROXY/TUNNEL           ║
-╚══════════════════════════════════════════════════════════════╝
+    echo -e "\n${ACCENT}>> Overview${RESET}"
+    echo -e "   Federation and external access CAN work through a VPN or tunnel."
+    echo -e "   The key is making sure DNS, your reverse proxy, and TURN/LiveKit"
+    echo -e "   are all reachable from the outside world on the correct IPs.\n"
 
-Federation and external access CAN work through a VPN. Here's how:
+    echo -e "${ACCENT}>> STEP 1 — Identify Your Real External IP${RESET}"
+    echo -e "   This is the IP that external Matrix servers and clients will connect to."
+    echo -e "   It must be the IP at your VPN exit node or tunnel endpoint — not your"
+    echo -e "   local machine IP and not your VPN tunnel interface IP.\n"
+    echo -e "   ${INFO}Detected local IP:  ${WARNING}$DETECTED_LOCAL${RESET}"
+    echo -e "   ${INFO}Detected public IP: ${WARNING}${DETECTED_PUBLIC:-NOT DETECTED — find it manually at https://ifconfig.me}${RESET}"
+    echo -e "\n   ${WARNING}⚠  If your VPN changes your public IP, the detected IP above may be"
+    echo -e "      your VPN exit node — verify this is the IP you want DNS to point to.${RESET}\n"
 
-STEP 1: Identify Your External IP
-────────────────────────────────
-This is the IP that external Matrix servers will connect to:
-  • If using VPN: Your exit node's public IP (NOT your tunnel IP)
-  • If using proxy: The proxy's public IP
-  • If using Wireguard: Your endpoint's IP
+    echo -e "${ACCENT}>> STEP 2 — DNS A Records${RESET}"
+    echo -e "   All your subdomains must point to your real external IP."
+    echo -e "   Replace ${WARNING}YOUR.PUBLIC.IP${RESET} with the IP identified in Step 1.\n"
+    echo -e "   ${INFO}Subdomain              Type    IP                 Proxy${RESET}"
+    echo -e "   ${INFO}──────────────────────────────────────────────────────────${RESET}"
+    echo -e "   ${WARNING}matrix.yourdomain.com  A       ${DETECTED_PUBLIC:-YOUR.PUBLIC.IP}   DNS Only${RESET}"
+    echo -e "   ${WARNING}auth.yourdomain.com    A       ${DETECTED_PUBLIC:-YOUR.PUBLIC.IP}   DNS Only or Proxied${RESET}"
+    echo -e "   ${WARNING}element.yourdomain.com A       ${DETECTED_PUBLIC:-YOUR.PUBLIC.IP}   DNS Only or Proxied${RESET}"
+    echo -e "   ${WARNING}livekit.yourdomain.com A       ${DETECTED_PUBLIC:-YOUR.PUBLIC.IP}   DNS Only (required)${RESET}"
+    echo -e "   ${WARNING}call.yourdomain.com    A       ${DETECTED_PUBLIC:-YOUR.PUBLIC.IP}   DNS Only or Proxied${RESET}"
+    echo -e "   ${WARNING}turn.yourdomain.com    A       ${DETECTED_PUBLIC:-YOUR.PUBLIC.IP}   DNS Only (required)${RESET}"
+    echo -e "\n   ${ERROR}⚠  LiveKit and TURN must ALWAYS be DNS Only — never proxied."
+    echo -e "      Proxying UDP traffic through Cloudflare or similar will break"
+    echo -e "      voice/video calls entirely.${RESET}\n"
 
-To find it: Go to https://ifconfig.me from your server
-Or run: curl ifconfig.me
+    echo -e "${ACCENT}>> STEP 3 — Reverse Proxy Must Listen on All Interfaces${RESET}"
+    echo -e "   Your reverse proxy must be reachable on your external IP."
+    echo -e "   Make sure it binds to ${WARNING}0.0.0.0${RESET} (all interfaces), not just localhost.\n"
+    echo -e "   ${INFO}NPM:     ${RESET}Listens on all interfaces by default — no changes needed."
+    echo -e "   ${INFO}Caddy:   ${RESET}Listens on :80 and :443 by default — no changes needed."
+    echo -e "   ${INFO}Traefik: ${RESET}Set entryPoints to 0.0.0.0:80 and 0.0.0.0:443 in config.\n"
 
-STEP 2: Set Up DNS A Records
-──────────────────────────────
-Your domain's DNS A records MUST point to your external IP:
+    echo -e "${ACCENT}>> STEP 4 — Cloudflare Tunnel (alternative to port forwarding)${RESET}"
+    echo -e "   If you cannot open ports on your router, Cloudflare Tunnel is a"
+    echo -e "   popular option. It routes HTTP/HTTPS traffic without open ports.\n"
+    echo -e "   ${WARNING}Important limitations with Cloudflare Tunnel:${RESET}"
+    echo -e "   ${INFO}• HTTP/HTTPS services (Matrix, MAS, Element) work fine${RESET}"
+    echo -e "   ${ERROR}• LiveKit (WebRTC/WebSocket) does NOT work through CF Tunnel${RESET}"
+    echo -e "   ${ERROR}• TURN (UDP) does NOT work through CF Tunnel${RESET}"
+    echo -e "   ${INFO}• For LiveKit and TURN you still need a VPS with open UDP ports${RESET}"
+    echo -e "   ${INFO}  — see the Pangolin/Coturn VPS guide in this script for that.${RESET}\n"
 
-VPNGUIDEEOF
+    echo -e "${ACCENT}>> STEP 5 — LiveKit & TURN Through a VPN${RESET}"
+    echo -e "   LiveKit (WebRTC signalling) and TURN (media relay) use UDP heavily."
+    echo -e "   Many VPNs block or throttle UDP, which will silently break calls.\n"
+    echo -e "   ${INFO}Recommended approach:${RESET}"
+    echo -e "   ${INFO}• Run TURN/Coturn on a separate VPS with open UDP ports${RESET}"
+    echo -e "   ${INFO}• Run LiveKit signalling through your stack as normal${RESET}"
+    echo -e "   ${INFO}• Point livekit.yourdomain.com DNS Only at your external IP${RESET}"
+    echo -e "   ${WARNING}• Verify your VPN allows UDP 3478, 5349, and 50000-60000${RESET}\n"
 
-    # Show actual detected IP in the guide
-    echo "  matrix.yourdomain.com          A    $DETECTED_PUBLIC      (your external IP)"
-    echo "  auth.yourdomain.com            A    $DETECTED_PUBLIC      (same IP)"
-    echo "  element.yourdomain.com         A    $DETECTED_PUBLIC      (same IP)"
-    echo "  livekit.yourdomain.com         A    $DETECTED_PUBLIC      (same IP)"
-    echo "  turn.yourdomain.com            A    $DETECTED_PUBLIC      (same IP, DNS Only for TURN)"
-    echo ""
-    echo "NOT your VPN tunnel IP, NOT your local IP ($DETECTED_LOCAL)."
-    echo ""
-    
-    cat << 'VPNGUIDEEOF2'
-STEP 3: Configure Reverse Proxy
-─────────────────────────────────
-Your reverse proxy (NPM, Caddy, Traefik) must listen on ALL interfaces:
-  • Nginx: Listen on 0.0.0.0:80 and 0.0.0.0:443
-  • Caddy: Listen on :80 and :443 (default is all interfaces)
-  • Traefik: entryPoints on 0.0.0.0:80 and 0.0.0.0:443
+    echo -e "${ACCENT}>> STEP 6 — Test Federation${RESET}"
+    echo -e "   After deployment, use the official Matrix federation tester:\n"
+    echo -e "   ${INFO}https://federationtester.matrix.org${RESET}\n"
+    echo -e "   Also test from a server outside your network:"
+    echo -e "   ${WARNING}curl -I https://matrix.yourdomain.com/.well-known/matrix/server${RESET}"
+    echo -e "   ${WARNING}curl -I https://matrix.yourdomain.com/.well-known/matrix/client${RESET}"
+    echo -e "   Both should return HTTP 200. If they time out, DNS or firewall is wrong.\n"
 
-STEP 4: Verify Connectivity
-──────────────────────────────
-After setup, test that external servers can reach you:
+    echo -e "${ACCENT}>> Common Problems & Fixes${RESET}"
+    echo -e "   ${ERROR}Federation not working${RESET}"
+    echo -e "   ${INFO}→ DNS A records not pointing to correct external IP${RESET}"
+    echo -e "   ${INFO}→ Reverse proxy not listening on 0.0.0.0${RESET}"
+    echo -e "   ${INFO}→ Ports 80/443 not forwarded through your VPN/router${RESET}\n"
+    echo -e "   ${ERROR}Voice/video calls failing${RESET}"
+    echo -e "   ${INFO}→ LiveKit or TURN being proxied through Cloudflare${RESET}"
+    echo -e "   ${INFO}→ VPN blocking UDP — use a VPS for TURN instead${RESET}"
+    echo -e "   ${INFO}→ livekit.yourdomain.com not set to DNS Only${RESET}\n"
+    echo -e "   ${ERROR}Certificate errors${RESET}"
+    echo -e "   ${INFO}→ Let's Encrypt cannot reach your domain to issue cert${RESET}"
+    echo -e "   ${INFO}→ Ensure port 80 is open and DNS is correctly set before deploying${RESET}\n"
 
-  # From a server NOT on your network:
-  nslookup matrix.yourdomain.com
-  curl -I https://matrix.yourdomain.com/.well-known/matrix/server
-  
-  # Should return HTTP 200, not connection refused or timeout
-
-STEP 5: Monitor Logs
-──────────────────────
-After deployment, check Synapse logs for federation errors:
-  
-  docker logs synapse | grep -i "federation\|tls\|connection"
-
-COMMON ISSUES & FIXES
-─────────────────────
-
-Problem: "Federation not working"
-Fix: Check DNS A records point to correct external IP
-     Verify reverse proxy is listening on 0.0.0.0
-
-Problem: "Connection refused from external servers"
-Fix: Ensure ports 80/443 are forwarded through your VPN/proxy
-     Check firewall allows incoming connections
-
-Problem: "Certificate errors in federation"
-Fix: Ensure Let's Encrypt (or your CA) can reach your domain
-     .well-known files must be accessible from external IPs
-
-VPNGUIDEEOF2
+    echo -e "${WARNING}Press ENTER to continue with setup...${RESET}"
+    read -r
 }
+
 
 show_npm_guide() {
     clear
@@ -3634,6 +3677,20 @@ add_header Access-Control-Allow-Origin * always;
 add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
 add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
 MASCONF
+    # If registration is disabled, append the /register block separately
+    if [[ "$MAS_REGISTRATION" != "true" ]]; then
+        echo -e "\n${ACCENT}Registration is disabled — also add this to the ${INFO}same Advanced Tab${ACCENT}:${RESET}"
+        echo -e "${WARNING}⚠  Paste this directly after the last add_header line above, with a blank line between them.${RESET}\n"
+        print_code << 'REGBLOCK'
+# Block registration page - redirect to login
+location = /register {
+    return 302 /login;
+}
+location ^~ /register {
+    return 302 /login;
+}
+REGBLOCK
+    fi
     echo -e "${WARNING}Press ENTER to continue...${RESET}"
     read -r
 
@@ -4673,8 +4730,7 @@ helpline=white,black
 
         else
             # Single stack — plain y/n
-            echo -ne "Remove selected Docker resources listed above? (y/n): "
-            read -r CLEAN_CONFIRM
+            ask_yn CLEAN_CONFIRM "Remove selected Docker resources listed above? (y/n): "
             if [[ ! "$CLEAN_CONFIRM" =~ ^[Yy]$ ]]; then
                 return 0
             fi
@@ -5281,10 +5337,10 @@ helpline=white,black
         (
             cd "$stack_dir" || exit 1
             echo -e "   ${INFO}Stopping stack...${RESET}"
-            docker compose down --remove-orphans --timeout 30
+            docker compose down --remove-orphans --timeout 30 </dev/tty >/dev/tty 2>/dev/tty
             echo -e "   ${INFO}Starting stack...${RESET}"
-            docker compose up -d
-        ) 2>&1 | sed 's/^/   /'
+            docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
+        )
         echo -e "   ${SUCCESS}✓ Stack updated${RESET}"
         parse_stack_configuration "$stack_dir"
     else
@@ -5320,7 +5376,7 @@ _feat_add() {
             # MAS OAuth client
             if [ -f "$stack_dir/mas/config.yaml" ] && \
                ! grep -q "element-admin-client" "$stack_dir/mas/config.yaml" 2>/dev/null; then
-                printf '\n  - client_id: "element-admin-client"\n    client_auth_method: none\n    client_uri: "https://%s.%s/"\n    redirect_uris:\n      - "https://%s.%s/"\n' \
+                printf '\n  - client_id: "element-admin-client"\n    client_auth_method: none\n    client_uri: "https://%s.%s/"\n    redirect_uris:\n      - "https://%s.%s/"\n    grant_types:\n      - authorization_code\n      - refresh_token\n    response_types:\n      - code\n    allowed_scopes:\n      - openid\n      - email\n      - urn:mas:admin\n      - "urn:matrix:org.matrix.msc2967.client:api:*"\n' \
                     "$CURRENT_SUB_ELEMENT_ADMIN" "$CURRENT_DOMAIN" \
                     "$CURRENT_SUB_ELEMENT_ADMIN" "$CURRENT_DOMAIN" \
                     >> "$stack_dir/mas/config.yaml"
@@ -5704,10 +5760,9 @@ helpline=white,black
 '
     local BRIDGE_SEL
     BRIDGE_SEL=$(whiptail --title " Manage Matrix Bridges " \
-        --checklist "Toggle bridges (SPACE to toggle, ENTER to confirm):" \
-        20 78 6 \
+        --checklist "Toggle bridges (SPACE to toggle, ENTER to confirm):\n\nNote: Telegram temporarily unavailable (Go version pending)" \
+        22 78 6 \
         "discord"  "Discord   -- Connect to Discord servers"              "$([ ${bwas[discord]}  -eq 1 ] && echo ON || echo OFF)" \
-        "telegram" "Telegram  -- Connect to Telegram chats"               "$([ ${bwas[telegram]} -eq 1 ] && echo ON || echo OFF)" \
         "whatsapp" "WhatsApp  -- Connect to WhatsApp (requires phone)"    "$([ ${bwas[whatsapp]} -eq 1 ] && echo ON || echo OFF)" \
         "signal"   "Signal    -- Connect to Signal (requires phone)"      "$([ ${bwas[signal]}   -eq 1 ] && echo ON || echo OFF)" \
         "slack"    "Slack     -- Connect to Slack workspaces"             "$([ ${bwas[slack]}    -eq 1 ] && echo ON || echo OFF)" \
@@ -5926,8 +5981,7 @@ helpline=white,black
             # ── Start new bridge containers ─────────────────────────────
             if [ -n "$COMPOSE_FILE" ]; then
                 echo -e "\n${ACCENT}>> Starting new bridge containers...${RESET}"
-                cd "$stack_dir" && docker compose -f "$(basename "$COMPOSE_FILE")" up -d 2>&1 \
-                    | grep -E "Creating|Starting|error|Error" | sed 's/^/   /' || true
+                cd "$stack_dir" && docker compose -f "$(basename "$COMPOSE_FILE")" up -d </dev/tty >/dev/tty 2>/dev/tty || true
             fi
         fi
     fi
@@ -6385,8 +6439,7 @@ run_uninstall() {
         echo -e "${WARNING}   Deleting the stack directory will also delete this script.${RESET}"
         echo -e "${INFO}   Please move it first:${RESET}"
         echo -e "   ${WARNING}mv \"$SCRIPT_REAL\" ~/matrix-stack-deploy.sh${RESET}\n"
-        echo -ne "   Have you moved the script, or do you want to continue anyway? [y/N]: "
-        read -r SCRIPT_MOVE_CONFIRM
+        ask_yn SCRIPT_MOVE_CONFIRM "   Have you moved the script, or do you want to continue anyway? [y/N]: "
         if [[ ! "$SCRIPT_MOVE_CONFIRM" =~ ^[Yy]$ ]]; then
             echo -e "\n   ${SUCCESS}✓ Uninstall cancelled — move the script first then re-run${RESET}"
             sleep 2
@@ -6573,78 +6626,6 @@ helpline=white,black
     echo -e "${INFO}Remaining stacks (if any) were not deleted${RESET}"
 }
 
-_delete_single_stack() {
-    local stack_path="$1"
-    local stack_name=$(basename "$stack_path")
-    local suffix=$(get_stack_resources "$stack_path")
-    
-    echo -e "${ACCENT}Processing: $stack_name${RESET}"
-    
-    # Get container suffix for resource cleanup
-    local container_base_name=$(echo "$stack_name" | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
-    
-    # Stop and remove containers
-    echo -e "   ${INFO}Stopping and removing containers...${RESET}"
-    
-    # Find and remove containers related to this stack
-    local containers_removed=0
-    if [ -n "$suffix" ]; then
-        # Stack with suffix - remove containers with exact suffix
-        for container in $(docker ps -aq --filter "name=$container_base_name" 2>/dev/null); do
-            local container_name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's|^/||')
-            if [[ "$container_name" == *"$suffix" ]] || [[ "$container_name" == "$container_base_name$suffix"* ]]; then
-                docker rm -f "$container" 2>/dev/null && ((containers_removed++))
-            fi
-        done
-    else
-        # Stack without suffix - remove non-suffixed containers
-        for container in $(docker ps -aq --filter "name=^${container_base_name}" 2>/dev/null); do
-            local container_name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's|^/||')
-            # Only remove if it doesn't have a suffix (no dash-number at the end)
-            if [[ ! "$container_name" =~ -[0-9]+$ ]]; then
-                docker rm -f "$container" 2>/dev/null && ((containers_removed++))
-            fi
-        done
-    fi
-    
-    echo -e "      Removed ${WARNING}$containers_removed${RESET} container(s)"
-    
-    # Remove volumes
-    echo -e "   ${INFO}Removing volumes...${RESET}"
-    local volumes_removed=0
-    local network_suffix="${suffix:-}"
-    
-    # Remove volumes associated with this stack
-    for volume in $(docker volume ls -q 2>/dev/null); do
-        if [[ "$volume" == *"$stack_name"* ]] || [[ "$volume" == *"$container_base_name$network_suffix"* ]]; then
-            docker volume rm "$volume" 2>/dev/null && ((volumes_removed++))
-        fi
-    done
-    
-    echo -e "      Removed ${WARNING}$volumes_removed${RESET} volume(s)"
-    
-    # Remove networks
-    echo -e "   ${INFO}Removing networks...${RESET}"
-    local networks_removed=0
-    local network_name="matrix-net${network_suffix}"
-    
-    if docker network ls --filter "name=$network_name" 2>/dev/null | grep -q "$network_name"; then
-        docker network rm "$network_name" 2>/dev/null && ((networks_removed++))
-    fi
-    
-    echo -e "      Removed ${WARNING}$networks_removed${RESET} network(s)"
-    
-    # Remove directory
-    echo -e "   ${INFO}Removing stack directory...${RESET}"
-    if rm -rf "$stack_path" 2>/dev/null; then
-        echo -e "      Removed directory: ${WARNING}$stack_path${RESET}"
-    else
-        echo -e "      ${ERROR}✗ Could not remove directory (may need sudo)${RESET}"
-    fi
-    
-    echo -e "   ${SUCCESS}✓ Stack deletion complete${RESET}\n"
-}
-
 ################################################################################
 # ADD BRIDGES TO EXISTING INSTALLATION                                         #
 ################################################################################
@@ -6688,9 +6669,7 @@ run_add_bridges() {
     local BRIDGE_DIR
     if [ -n "$FOUND_DIR" ]; then
         echo -e "${SUCCESS}✓ Found installation at: ${INFO}$FOUND_DIR${RESET}"
-        echo -ne "   Use this path? [Y/n]: "
-        read -r USE_FOUND
-        USE_FOUND=${USE_FOUND:-y}
+        ask_yn USE_FOUND "   Use this path? [Y/n]: " "y"
         if [[ "$USE_FOUND" =~ ^[Yy]$ ]]; then
             BRIDGE_DIR="$FOUND_DIR"
         else
@@ -6841,10 +6820,9 @@ helpline=white,black
     SELECTED_BRIDGES=()
     while true; do
         BRIDGE_SELECTION=$($DIALOG_CMD --title " Add Matrix Bridges " \
-            --checklist "Select bridges to add (SPACE to toggle, ENTER to confirm):" \
-            20 78 10 \
+            --checklist "Select bridges to add (SPACE to toggle, ENTER to confirm):\n\nNote: Telegram temporarily unavailable (Go version pending)" \
+            22 78 10 \
             "discord"   "Discord   — Connect to Discord servers"           OFF \
-            "telegram"  "Telegram  — Connect to Telegram chats"            OFF \
             "whatsapp"  "WhatsApp  — Connect to WhatsApp (requires phone)"  OFF \
             "signal"    "Signal    — Connect to Signal (requires phone)"    OFF \
             "slack"     "Slack     — Connect to Slack workspaces"           OFF \
@@ -7028,8 +7006,7 @@ helpline=white,black
         done
 
         echo -e "\n${ACCENT}>> Restarting stack to start new bridges...${RESET}"
-        cd "$TARGET_DIR" && docker compose -f "$(basename "$COMPOSE_FILE")" up -d 2>&1 \
-            | grep -E "Creating|Starting|✓|error|Error" | sed 's/^/   /' || true
+        cd "$TARGET_DIR" && docker compose -f "$(basename "$COMPOSE_FILE")" up -d </dev/tty >/dev/tty 2>/dev/tty || true
     fi
 
     # ── Register bridges with Synapse (appservice_config_files) ───────────
@@ -7120,20 +7097,21 @@ run_diagnostics() {
     draw_header
     echo -e "\n${ACCENT}>> Collect System Diagnostics${RESET}\n"
 
+    # ── path detection ────────────────────────────────────────────────────────
     local DIAG_DIR=""
-    # Try to determine installation path
     if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then
         DIAG_DIR="$TARGET_DIR"
         echo -e "${INFO}Using installation path from session: ${SUCCESS}$DIAG_DIR${RESET}"
     else
-        # Attempt to detect from running synapse container
         local container_path
-        container_path=$(docker inspect synapse 2>/dev/null | python3 -c "import sys,json; mounts=json.load(sys.stdin)[0].get('Mounts',[]); [print(m['Source'].rstrip('/synapse')) for m in mounts if 'synapse' in m.get('Source','')]" 2>/dev/null | head -1)
+        container_path=$(docker inspect synapse 2>/dev/null | python3 -c \
+            "import sys,json; mounts=json.load(sys.stdin)[0].get('Mounts',[]); \
+             [print(m['Source'].rstrip('/synapse')) for m in mounts if 'synapse' in m.get('Source','')]" \
+            2>/dev/null | head -1)
         if [ -n "$container_path" ] && [ -d "$container_path" ]; then
             DIAG_DIR="$container_path"
             echo -e "${INFO}Detected installation path from container: ${SUCCESS}$DIAG_DIR${RESET}"
         else
-            # Check common paths
             for p in "/opt/stacks/matrix-stack" "/opt/matrix-stack" "$HOME/matrix-stack" "$(pwd)/matrix-stack"; do
                 if [ -d "$p" ] && [ -f "$p/compose.yaml" -o -f "$p/docker-compose.yml" ]; then
                     DIAG_DIR="$p"
@@ -7155,32 +7133,107 @@ run_diagnostics() {
         fi
     fi
 
+    # ── redaction helper ──────────────────────────────────────────────────────
+    # Strips ANSI codes and redacts secrets, IPs, domains, tokens, emails, paths
+    _redact() {
+        local text="$1"
+        # ANSI color codes
+        text=$(echo "$text" | sed 's/\x1b\[[0-9;]*m//g')
+        # Known in-memory secrets (only if set)
+        [ -n "$ADMIN_PASS" ]            && text=$(echo "$text" | sed "s|${ADMIN_PASS}|[REDACTED_PASSWORD]|g")
+        [ -n "$DB_PASS" ]               && text=$(echo "$text" | sed "s|${DB_PASS}|[REDACTED_DB_PASSWORD]|g")
+        [ -n "$REG_SECRET" ]            && text=$(echo "$text" | sed "s|${REG_SECRET}|[REDACTED_REG_SECRET]|g")
+        [ -n "$MAS_SECRET" ]            && text=$(echo "$text" | sed "s|${MAS_SECRET}|[REDACTED_MAS_SECRET]|g")
+        [ -n "$MAS_ENCRYPTION_SECRET" ] && text=$(echo "$text" | sed "s|${MAS_ENCRYPTION_SECRET}|[REDACTED_MAS_ENC_SECRET]|g")
+        [ -n "$LK_API_KEY" ]            && text=$(echo "$text" | sed "s|${LK_API_KEY}|[REDACTED_LK_KEY]|g")
+        [ -n "$LK_API_SECRET" ]         && text=$(echo "$text" | sed "s|${LK_API_SECRET}|[REDACTED_LK_SECRET]|g")
+        [ -n "$SLIDING_SYNC_SECRET" ]   && text=$(echo "$text" | sed "s|${SLIDING_SYNC_SECRET}|[REDACTED_SS_SECRET]|g")
+        [ -n "$NPM_ADMIN_PASS" ]        && text=$(echo "$text" | sed "s|${NPM_ADMIN_PASS}|[REDACTED_NPM_PASSWORD]|g")
+        [ -n "$PANGOLIN_NEWT_SECRET" ]  && text=$(echo "$text" | sed "s|${PANGOLIN_NEWT_SECRET}|[REDACTED_PANGOLIN_SECRET]|g")
+        # Generic secret/token/password patterns in YAML/env format
+        text=$(echo "$text" | sed \
+            -e 's/\(secret\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(password\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(token\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(api[_-]key\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(api[_-]secret\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(hs_token\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(as_token\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(encryption\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
+            -e 's/\(POSTGRES_PASSWORD\s*[:=]\s*\)[^ \t\n]*/\1[REDACTED]/g' \
+            -e 's/\(SYNCV3_SECRET\s*[:=]\s*\)[^ \t\n]*/\1[REDACTED]/g' \
+            -e 's/\(LIVEKIT_SECRET\s*[:=]\s*\)[^ \t\n]*/\1[REDACTED]/g' \
+            -e 's/\(LIVEKIT_KEY\s*[:=]\s*\)[^ \t\n]*/\1[REDACTED]/g' \
+            -e 's/\(TUNNEL_SECRET\s*[:=]\s*\)[^ \t\n]*/\1[REDACTED]/g')
+        # Email addresses
+        text=$(echo "$text" | sed 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[REDACTED_EMAIL]/g')
+        # PostgreSQL connection strings (redact password portion)
+        text=$(echo "$text" | sed 's|postgresql://[^:]*:[^@]*@|postgresql://[REDACTED]:[REDACTED]@|g')
+        text=$(echo "$text" | sed 's|postgres://[^:]*:[^@]*@|postgres://[REDACTED]:[REDACTED]@|g')
+        # Private/LAN IP addresses
+        text=$(echo "$text" | sed \
+            -e 's/192\.168\.[0-9]\{1,3\}\.[0-9]\{1,3\}/[LAN_IP]/g' \
+            -e 's/10\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/[LAN_IP]/g' \
+            -e 's/172\.\(1[6-9]\|2[0-9]\|3[01]\)\.[0-9]\{1,3\}\.[0-9]\{1,3\}/[LAN_IP]/g')
+        # Public IP addresses (bare IPv4 not part of a URL path)
+        text=$(echo "$text" | sed 's/\b\([0-9]\{1,3\}\.\)\{3\}[0-9]\{1,3\}\b/[PUBLIC_IP]/g')
+        # Domain names (anything that looks like sub.domain.tld)
+        [ -n "$DOMAIN" ] && text=$(echo "$text" | sed "s|${DOMAIN}|[DOMAIN]|g")
+        # Absolute paths that include a real username (e.g. /home/user/... /root/...)
+        text=$(echo "$text" | sed \
+            -e 's|/home/[^/[:space:]]*/|/home/[USER]/|g' \
+            -e 's|/root/[^[:space:]]*|/root/[PATH]|g')
+        echo "$text"
+    }
+
     echo -e "${ACCENT}Collecting diagnostics (this may take a few seconds)...${RESET}"
-    echo -e "${INFO} this will include:${RESET}"
+    echo -e "${INFO}The following will be collected and redacted of personal info:${RESET}\n"
+    echo -e "${WARNING}- System info (OS, kernel, RAM, disk)${RESET}"
+    echo -e "${WARNING}- Docker versions & container list${RESET}"
+    echo -e "${WARNING}- Container inspect (health, restart count, exit codes)${RESET}"
+    echo -e "${WARNING}- Resource usage (CPU/memory per container)${RESET}"
+    echo -e "${WARNING}- Log tails (last 50 lines per container)${RESET}"
+    echo -e "${WARNING}- Port bindings${RESET}"
+    echo -e "${WARNING}- Docker volumes & network${RESET}"
+    echo -e "${WARNING}- Configuration file snippets${RESET}"
+    echo -e "${WARNING}- Bridge registration files${RESET}"
+    echo -e "${WARNING}- Well-known endpoint reachability${RESET}"
     echo
 
-    # Collect data
-    echo -e "${WARNING}- Docker versions${RESET}"
-    echo -e "${WARNING}- Container lists${RESET}"
-    echo -e "${WARNING}- Log tails (last 20 lines for each container)${RESET}"
-    echo -e "${WARNING}- Configuration file snippets${RESET}"
-    echo -e "${WARNING}- Network details${RESET}"
-    echo
     local diag_data=""
     diag_data+="=== Matrix Stack Diagnostics ===\n"
     diag_data+="Generated: $(date)\n"
     diag_data+="Script version: $SCRIPT_VERSION\n"
-    diag_data+="Installation path: ${DIAG_DIR:-Not found}\n\n"
+    diag_data+="Installation path: $(_redact "${DIAG_DIR:-Not found}")\n\n"
 
-    diag_data+="--- Docker version ---\n"
+    # ── system info ───────────────────────────────────────────────────────────
+    diag_data+="--- System Info ---\n"
+    diag_data+="$(_redact "$(uname -a 2>&1)")\n"
+    if [ -f /etc/os-release ]; then
+        diag_data+="$(_redact "$(grep -E '^(NAME|VERSION)=' /etc/os-release 2>&1)")\n"
+    fi
+    diag_data+="Uptime: $(uptime 2>&1)\n"
+    diag_data+="RAM:    $(free -h 2>&1 | head -2)\n"
+    diag_data+="Disk:   $(_redact "$(df -h / 2>&1)")\n\n"
+
+    # ── docker versions ───────────────────────────────────────────────────────
+    diag_data+="--- Docker Version ---\n"
     diag_data+="$(docker --version 2>&1)\n"
-    diag_data+="--- Docker Compose version ---\n"
     diag_data+="$(docker compose version 2>&1)\n\n"
 
-    diag_data+="--- All containers ---\n"
-    diag_data+="$(docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' 2>&1)\n\n"
+    # ── container overview ────────────────────────────────────────────────────
+    diag_data+="--- All Containers ---\n"
+    diag_data+="$(docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.RunningFor}}' 2>&1)\n\n"
 
-    # List of possible container names to check
+    # ── resource usage ────────────────────────────────────────────────────────
+    diag_data+="--- Container Resource Usage ---\n"
+    diag_data+="$(docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}' 2>&1)\n\n"
+
+    # ── port bindings ─────────────────────────────────────────────────────────
+    diag_data+="--- Listening Ports (matrix-related) ---\n"
+    diag_data+="$(_redact "$(ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null | grep -E '808[0-9]|801[0-9]|807|8009|8089|29[0-9]{3}|7880|7881|3478|5349' || echo 'ss/netstat not available')")\n\n"
+
+    # ── per-container inspect + logs ──────────────────────────────────────────
     local possible_containers=(
         "synapse" "synapse-db" "matrix-auth" "livekit" "livekit-jwt" "element-web"
         "element-call" "sliding-sync" "matrix-media-repo" "element-admin" "synapse-admin"
@@ -7188,38 +7241,97 @@ run_diagnostics() {
         "matrix-bridge-signal" "matrix-bridge-slack" "matrix-bridge-meta"
     )
 
-    diag_data+="--- Last 20 lines of logs for key containers ---\n"
+    diag_data+="--- Container Details & Logs ---\n"
     for c in "${possible_containers[@]}"; do
-        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^$c$"; then
+        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${c}$"; then
             diag_data+=">>> $c\n"
-            diag_data+="$(docker logs --tail 20 "$c" 2>&1)\n\n"
+
+            # Key inspect fields: health, restart count, exit code, OOMKilled
+            local inspect_out
+            inspect_out=$(docker inspect "$c" 2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)[0]
+s = d.get('State', {})
+hc = s.get('Health', {})
+r = d.get('RestartCount', 0)
+print(f'  Status:        {s.get(\"Status\",\"?\")}')
+print(f'  ExitCode:      {s.get(\"ExitCode\",\"?\")}')
+print(f'  OOMKilled:     {s.get(\"OOMKilled\",False)}')
+print(f'  RestartCount:  {r}')
+if hc:
+    print(f'  Health:        {hc.get(\"Status\",\"?\")}')
+    logs = hc.get('Log', [])
+    if logs:
+        last = logs[-1]
+        print(f'  LastHealthLog: {last.get(\"Output\",\"\").strip()[:120]}')
+" 2>/dev/null || echo "  (inspect unavailable)")
+            diag_data+="$(_redact "$inspect_out")\n"
+
+            # Log tail
+            diag_data+="  -- last 50 log lines --\n"
+            diag_data+="$(_redact "$(docker logs --tail 50 "$c" 2>&1)")\n\n"
         fi
     done
 
+    # ── volumes ───────────────────────────────────────────────────────────────
+    diag_data+="--- Docker Volumes ---\n"
+    diag_data+="$(_redact "$(docker volume ls 2>&1)")\n\n"
+
+    # ── network ───────────────────────────────────────────────────────────────
+    diag_data+="--- Docker Network (matrix-net) ---\n"
+    diag_data+="$(_redact "$(docker network inspect matrix-net 2>&1)")\n\n"
+
+    # ── config files ─────────────────────────────────────────────────────────
     if [ -n "$DIAG_DIR" ] && [ -d "$DIAG_DIR" ]; then
-        diag_data+="--- Configuration files (first 20 lines) ---\n"
-        for f in "$DIAG_DIR/synapse/homeserver.yaml" "$DIAG_DIR/mas/config.yaml" "$DIAG_DIR/livekit/livekit.yaml" "$DIAG_DIR/element-web/config.json"; do
+        diag_data+="--- Configuration Files ---\n"
+        for f in \
+            "$DIAG_DIR/synapse/homeserver.yaml" \
+            "$DIAG_DIR/mas/config.yaml" \
+            "$DIAG_DIR/livekit/livekit.yaml" \
+            "$DIAG_DIR/element-web/config.json" \
+            "$DIAG_DIR/element-call/config.json"; do
             if [ -f "$f" ]; then
-                diag_data+=">>> $f\n"
-                diag_data+="$(head -20 "$f" 2>&1)\n\n"
+                diag_data+=">>> $(_redact "$f")\n"
+                diag_data+="$(_redact "$(cat "$f" 2>&1)")\n\n"
             fi
         done
-        # Compose file
-        if [ -f "$DIAG_DIR/compose.yaml" ]; then
-            diag_data+=">>> $DIAG_DIR/compose.yaml (first 50 lines)\n"
-            diag_data+="$(head -50 "$DIAG_DIR/compose.yaml" 2>&1)\n\n"
-        elif [ -f "$DIAG_DIR/docker-compose.yml" ]; then
-            diag_data+=">>> $DIAG_DIR/docker-compose.yml (first 50 lines)\n"
-            diag_data+="$(head -50 "$DIAG_DIR/docker-compose.yml" 2>&1)\n\n"
+
+        # compose.yaml (full, redacted)
+        local compose_file=""
+        [ -f "$DIAG_DIR/compose.yaml" ]          && compose_file="$DIAG_DIR/compose.yaml"
+        [ -f "$DIAG_DIR/docker-compose.yml" ]    && compose_file="$DIAG_DIR/docker-compose.yml"
+        if [ -n "$compose_file" ]; then
+            diag_data+=">>> $(_redact "$compose_file")\n"
+            diag_data+="$(_redact "$(cat "$compose_file" 2>&1)")\n\n"
+        fi
+
+        # Bridge registration files (contain hs_token / as_token)
+        if [ -d "$DIAG_DIR/bridges" ]; then
+            diag_data+="--- Bridge Registration Files ---\n"
+            for reg in "$DIAG_DIR/bridges"/*/*.yaml "$DIAG_DIR/bridges"/*/*.yml; do
+                [ -f "$reg" ] || continue
+                diag_data+=">>> $(_redact "$reg")\n"
+                diag_data+="$(_redact "$(cat "$reg" 2>&1)")\n\n"
+            done
         fi
     fi
 
-    diag_data+="--- Docker network matrix-net ---\n"
-    diag_data+="$(docker network inspect matrix-net 2>&1)\n\n"
+    # ── well-known reachability ───────────────────────────────────────────────
+    if [ -n "$DOMAIN" ]; then
+        diag_data+="--- Well-Known Reachability ---\n"
+        for endpoint in \
+            "https://${DOMAIN}/.well-known/matrix/server" \
+            "https://${DOMAIN}/.well-known/matrix/client"; do
+            local result
+            result=$(curl -sS --max-time 5 -o /dev/null -w "HTTP %{http_code} (%{time_total}s)" "$endpoint" 2>&1)
+            diag_data+="$(_redact "$endpoint"): $result\n"
+        done
+        diag_data+="\n"
+    fi
 
     echo -e "${SUCCESS}Diagnostics collected.${RESET}\n"
 
-    # Ask to save
+    # ── save prompt ───────────────────────────────────────────────────────────
     ask_yn SAVE_DIAG "Save diagnostics to a file? (y/n): " y
     if [[ "$SAVE_DIAG" =~ ^[Yy]$ ]]; then
         local default_path="${DIAG_DIR:-$PWD}/matrix-diagnostics-$(date +%Y%m%d-%H%M%S).txt"
@@ -7238,7 +7350,7 @@ run_diagnostics() {
         echo -e "$diag_data" > "$DIAG_PATH"
         chmod 600 "$DIAG_PATH"
         echo -e "${SUCCESS}✓ Diagnostics saved to: ${CONFIG_PATH}${DIAG_PATH}${RESET}"
-        echo -e "   ${WARNING}⚠️  This file may contain sensitive information. Handle with care.${RESET}"
+        echo -e "   ${WARNING}⚠️  Review before sharing — file has been redacted but verify manually.${RESET}"
     fi
 
     echo -e "\n${INFO}Press Enter to return to menu...${RESET}"
@@ -7657,12 +7769,41 @@ main_deployment() {
         echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
         ask_yn INST_DOCKGE "Install Dockge (includes Docker & Compose)? (y/n): "
         if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
-            curl -fsSL https://get.docker.com | sh
+            echo -e "\n${ACCENT}>> Installing Docker...${RESET}"
+            local docker_install_script="/tmp/get-docker.sh"
+            curl -fsSL https://get.docker.com -o "$docker_install_script"
+            sh "$docker_install_script" </dev/tty >/dev/tty 2>/dev/tty
+            rm -f "$docker_install_script"
+            echo -e "\n${ACCENT}>> Installing Dockge...${RESET}"
             mkdir -p /opt/dockge /opt/stacks
-            cd /opt/dockge && curl https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output compose.yaml
-            docker compose up -d && cd - > /dev/null
+            curl -fsSL https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output /opt/dockge/compose.yaml
+            cd /opt/dockge && docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
+            cd - > /dev/null
+            echo -e "\n${SUCCESS}\u2713 Dockge installed and running.${RESET}"
             DOCKGE_FOUND=true
             DOCKER_READY=true
+        else
+            echo -e "\n${WARNING}Dockge skipped.${RESET}"
+            echo -e "${INFO}Docker and Docker Compose are required to run this script.${RESET}"
+            ask_yn INST_DOCKER_ONLY "Install Docker & Compose only (without Dockge)? (y/n): "
+            if [[ "$INST_DOCKER_ONLY" =~ ^[Yy]$ ]]; then
+                echo -e "\n${ACCENT}>> Installing Docker...${RESET}"
+                local docker_install_script="/tmp/get-docker.sh"
+                curl -fsSL https://get.docker.com -o "$docker_install_script"
+                sh "$docker_install_script" </dev/tty >/dev/tty 2>/dev/tty
+                rm -f "$docker_install_script"
+                echo -e "\n${SUCCESS}\u2713 Docker installed.${RESET}"
+                DOCKER_READY=true
+            else
+                echo -e "\n${ERROR}\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557${RESET}"
+                echo -e "${ERROR}\u2551  Docker is required to deploy the Matrix stack.              \u2551${RESET}"
+                echo -e "${ERROR}\u2551  Without it, containers cannot be built or run.              \u2551${RESET}"
+                echo -e "${ERROR}\u2551                                                              \u2551${RESET}"
+                echo -e "${ERROR}\u2551  Please install Docker manually and re-run this script:      \u2551${RESET}"
+                echo -e "${ERROR}\u2551  https://docs.docker.com/engine/install/                     \u2551${RESET}"
+                echo -e "${ERROR}\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n${RESET}"
+                exit 1
+            fi
         fi
     fi
 
@@ -7689,13 +7830,6 @@ main_deployment() {
     # Now show VPN guide AFTER IPs are detected
     if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
         show_vpn_setup_guide
-        echo -e "\n${WARNING}⚠️  Important:${RESET}"
-        echo -e "   ${INFO}• You can still deploy through a VPN${RESET}"
-        echo -e "   ${INFO}• Federation and external access WILL work IF:${RESET}"
-        echo -e "   ${INFO}  1. You know your REAL external IP (VPN exit node IP)${RESET}"
-        echo -e "   ${INFO}  2. Your DNS A records point to this external IP${RESET}"
-        echo -e "   ${INFO}  3. Your reverse proxy listens on this external IP${RESET}"
-        echo -e ""
     else
         echo -e "   ${SUCCESS}✓ No VPN detected, proceeding with normal setup${RESET}"
         echo -e ""
@@ -8654,7 +8788,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     # Generate secrets
     DB_NAME="synapse"
     DB_USER="synapse"
-    DB_PASS=$(head -c 12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    DB_PASS=$(openssl rand -hex 16)
     REG_SECRET=$(openssl rand -hex 32)
     MAS_SECRET=$(openssl rand -hex 32)
     MAS_ENCRYPTION_SECRET=$(openssl rand -hex 32)
