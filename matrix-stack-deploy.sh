@@ -44,67 +44,128 @@
 trap 'echo -e "\033[0m"; exit 130' INT
 
 # Script version and repository info
-SCRIPT_VERSION="1.8"
+SCRIPT_VERSION="1.9"
 GITHUB_REPO="zeMadCat/Matrix-docker-stack"
 GITHUB_BRANCH="main"
 
 # Logging setup - will be fully configured once TARGET_DIR is set
 LOG_FILE=""
 ENABLE_LOGGING=true
+_LOG_BUFFER=()   # holds entries before setup_logging is called
+
+# Helper: safely redact a secret from a string, handling special sed chars
+_redact() {
+    local text="$1" secret="$2" label="$3"
+    [[ -z "$secret" ]] && { printf '%s' "$text"; return; }
+    local escaped
+    escaped=$(printf '%s' "$secret" | sed 's/[&\\/]/\\&/g; s/|/\\|/g')
+    printf '%s' "$text" | sed "s|${escaped}|${label}|g"
+}
+# Alias used by diagnostics _redact — same logic, same signature
+_redact_val() { _redact "$@"; }
 
 # Function to setup logging once we know the target directory
 setup_logging() {
     LOG_FILE="$TARGET_DIR/matrix-stack-deployment.log"
-    # Start fresh log file with timestamp
     {
-        echo "================================================================================"
-        echo "Matrix Stack Deployment Log"
-        echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "Script Version: $SCRIPT_VERSION"
-        echo "================================================================================"
         echo ""
-        echo "Note: Sensitive data (passwords, secrets, tokens) are automatically blurred"
-        echo "with [REDACTED_*] placeholders for security."
+        echo "════════════════════════════════════════════════════════════════════════════════"
+        echo "═══════════════════════   MATRIX STACK DEPLOYMENT LOG   ═══════════════════════"
+        echo "════════════════════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "  Started:        $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "  Script Version: $SCRIPT_VERSION"
+        echo "  Hostname:       $(hostname)"
+        echo "  User:           $(whoami) (uid=$(id -u))"
+        echo ""
+        echo "  NOTE: Sensitive data (passwords, secrets, tokens) are redacted."
+        echo "        ANSI color codes are stripped. Safe to share for troubleshooting."
+        echo ""
+        echo "════════════════════════════════════════════════════════════════════════════════"
         echo ""
     } > "$LOG_FILE"
     chmod 640 "$LOG_FILE"
+
+    # Flush any buffered entries from before TARGET_DIR was known
+    if [[ ${#_LOG_BUFFER[@]} -gt 0 ]]; then
+        for _entry in "${_LOG_BUFFER[@]}"; do
+            printf '%s\n' "$_entry" >> "$LOG_FILE" 2>/dev/null || true
+        done
+        _LOG_BUFFER=()
+    fi
 }
 
-# Function to log section headers
+# Write a visible end marker to the log file only — not printed to terminal
+log_end() {
+    [ -z "$LOG_FILE" ] && return
+    [ ! -f "$LOG_FILE" ] && return
+    {
+        echo ""
+        echo "════════════════════════════════════════════════════════════════════════════════"
+        echo "═══════════════════════   DEPLOYMENT LOG END   ═════════════════════════════════"
+        echo "════════════════════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "  Completed:  $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "  Log file:   $LOG_FILE"
+        echo ""
+        echo "  If you need help, open an issue at:"
+        echo "  https://github.com/zeMadCat/Matrix-docker-stack"
+        echo ""
+        echo "════════════════════════════════════════════════════════════════════════════════"
+        echo ""
+    } >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# Internal: write one sanitized, color-stripped line to the log file
+_log_write() {
+    local level="$1"
+    local message="$2"
+
+    local sanitized="$message"
+
+    # Strip real ESC byte ANSI sequences (e.g. from printf or echo -e)
+    sanitized=$(printf '%s' "$sanitized" | sed 's/\x1b\[[0-9;]*[mGKHFJABCDsu]//g; s/\x1b(B//g')
+    # Strip remaining real ESC bytes
+    sanitized=$(printf '%s' "$sanitized" | tr -d $'\033')
+    # Strip literal \033[...m strings (from single-quoted color variables like SUCCESS='\033[1;92m')
+    sanitized=$(printf '%s' "$sanitized" | sed 's/\\033\[[0-9;]*[mGKHFJABCDsu]//g; s/\\033(B//g; s/\\033//g')
+
+    # Redact secrets — only if variable is set AND non-empty
+    sanitized=$(_redact "$sanitized" "${ADMIN_PASS:-}"            "[REDACTED_PASSWORD]")
+    sanitized=$(_redact "$sanitized" "${DB_PASS:-}"               "[REDACTED_DB_PASSWORD]")
+    sanitized=$(_redact "$sanitized" "${REG_SECRET:-}"            "[REDACTED_REG_SECRET]")
+    sanitized=$(_redact "$sanitized" "${MAS_SECRET:-}"            "[REDACTED_MAS_SECRET]")
+    sanitized=$(_redact "$sanitized" "${MAS_ENCRYPTION_SECRET:-}" "[REDACTED_MAS_ENC_SECRET]")
+    sanitized=$(_redact "$sanitized" "${LK_API_SECRET:-}"         "[REDACTED_LK_SECRET]")
+    sanitized=$(_redact "$sanitized" "${LK_API_KEY:-}"            "[REDACTED_LK_KEY]")
+    sanitized=$(_redact "$sanitized" "${NPM_ADMIN_PASS:-}"        "[REDACTED_NPM_PASSWORD]")
+    sanitized=$(_redact "$sanitized" "${PANGOLIN_NEWT_SECRET:-}"  "[REDACTED_PANGOLIN_SECRET]")
+
+    local ts
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    local line
+    line=$(printf '[%s] [%s] %s' "$ts" "$level" "$sanitized")
+
+    if [[ -n "$LOG_FILE" ]] && [[ -d "$(dirname "$LOG_FILE")" ]]; then
+        printf '%s\n' "$line" >> "$LOG_FILE" 2>/dev/null || true
+    else
+        # LOG_FILE not ready yet — buffer for later flush
+        _LOG_BUFFER+=("$line")
+    fi
+}
+
+# Public logging functions — call these throughout the script
+log_message() { _log_write "INFO " "$1"; }
+log_warn()    { _log_write "WARN " "$1"; }
+log_error()   { _log_write "ERROR" "$1"; }
+log_cmd()     { _log_write "CMD  " "$1"; }  # for logging commands being run
+log_ok()      { _log_write "OK   " "$1"; }  # for success confirmations
+
 log_section() {
     local section="$1"
-    log_message "──────────────────────────────────────────────────────────────────"
-    log_message ">> $section"
-    log_message "──────────────────────────────────────────────────────────────────"
-}
-
-# Function to log messages to both console and file
-log_message() {
-    local message="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local hostname=$(hostname)
-    local script_name="matrix-deploy"
-    
-    # Log to file without ANSI codes and with sensitive data blurred
-    # Only proceed if log file is configured
-    if [ -z "$LOG_FILE" ] || [ ! -d "$(dirname "$LOG_FILE")" ]; then
-        return  # Log file not ready yet, skip silently
-    fi
-    
-    local sanitized="$message"
-    # Blur sensitive patterns - only if variables are set and non-empty
-    [ -n "$ADMIN_PASS" ] && sanitized=$(echo "$sanitized" | sed "s|${ADMIN_PASS}|[REDACTED_PASSWORD]|g")
-    [ -n "$DB_PASS" ] && sanitized=$(echo "$sanitized" | sed "s|${DB_PASS}|[REDACTED_DB_PASSWORD]|g")
-    [ -n "$REG_SECRET" ] && sanitized=$(echo "$sanitized" | sed "s|${REG_SECRET}|[REDACTED_REG_SECRET]|g")
-    [ -n "$MAS_SECRET" ] && sanitized=$(echo "$sanitized" | sed "s|${MAS_SECRET}|[REDACTED_MAS_SECRET]|g")
-    [ -n "$LK_API_SECRET" ] && sanitized=$(echo "$sanitized" | sed "s|${LK_API_SECRET}|[REDACTED_LK_SECRET]|g")
-    [ -n "$NPM_ADMIN_PASS" ] && sanitized=$(echo "$sanitized" | sed "s|${NPM_ADMIN_PASS}|[REDACTED_NPM_PASSWORD]|g")
-    [ -n "$PANGOLIN_NEWT_SECRET" ] && sanitized=$(echo "$sanitized" | sed "s|${PANGOLIN_NEWT_SECRET}|[REDACTED_PANGOLIN_SECRET]|g")
-    # Remove ANSI color codes
-    sanitized=$(echo "$sanitized" | sed 's/\x1b\[[0-9;]*m//g')
-    
-    # syslog-style format: TIMESTAMP HOSTNAME PROGRAM[PID]: MESSAGE
-    printf "[%s] %s %s[%s]: %s\n" "$timestamp" "$hostname" "$script_name" "$$" "$sanitized" >> "$LOG_FILE" 2>/dev/null || true
+    _log_write "-----" "------------------------------------------------------------"
+    _log_write "STEP " ">>> $section"
+    _log_write "-----" "------------------------------------------------------------"
 }
 
 ################################################################################
@@ -145,6 +206,145 @@ CODE='\033[0;32m'                  # Dark green - code block content
 
 # Global installation directory (set during installation, used by other functions)
 TARGET_DIR=""
+
+################################################################################
+# OS DETECTION                                                                 #
+################################################################################
+
+# Populated by detect_os() — used throughout the script instead of hardcoded apt
+PKG_MANAGER=""        # apt | pacman | dnf
+PKG_UPDATE=""         # full update command
+PKG_UPGRADE=""        # full upgrade command
+PKG_INSTALL=""        # install prefix (package name(s) appended)
+PKG_QUERY=""          # check if package installed (append package name)
+DISTRO_ID=""          # raw $ID from /etc/os-release
+DISTRO_FAMILY=""      # debian | arch | fedora
+DISTRO_COLOR=""       # color code for display
+DISTRO_LABEL=""       # human-readable name for display
+
+detect_os() {
+    # Read /etc/os-release
+    if [ -f /etc/os-release ]; then
+        source /etc/os-release
+        DISTRO_ID="${ID:-unknown}"
+        local ID_LIKE_VAL="${ID_LIKE:-}"
+    else
+        DISTRO_ID="unknown"
+        local ID_LIKE_VAL=""
+    fi
+
+    # Map to family
+    case "$DISTRO_ID" in
+        ubuntu|debian|raspbian|dietpi|linuxmint|pop|elementary|zorin|kali|parrot|mx)
+            DISTRO_FAMILY="debian" ;;
+        arch|manjaro|endeavouros|garuda|artix|arcolinux)
+            DISTRO_FAMILY="arch" ;;
+        fedora|rhel|centos|rocky|almalinux|nobara)
+            DISTRO_FAMILY="fedora" ;;
+        *)
+            # Try ID_LIKE fallback
+            if echo "$ID_LIKE_VAL" | grep -qi "debian\|ubuntu"; then
+                DISTRO_FAMILY="debian"
+            elif echo "$ID_LIKE_VAL" | grep -qi "arch"; then
+                DISTRO_FAMILY="arch"
+            elif echo "$ID_LIKE_VAL" | grep -qi "fedora\|rhel"; then
+                DISTRO_FAMILY="fedora"
+            else
+                DISTRO_FAMILY="unknown"
+            fi
+            ;;
+    esac
+
+    # Set package manager commands per family (even if unknown — will be overridden by prompt)
+    _apply_distro_vars
+}
+
+# Apply PKG_* vars and display labels based on DISTRO_FAMILY
+_apply_distro_vars() {
+    case "$DISTRO_FAMILY" in
+        debian)
+            PKG_MANAGER="apt"
+            PKG_UPDATE="apt-get update -qq"
+            PKG_UPGRADE="apt-get upgrade -y"
+            PKG_INSTALL="apt-get install -y"
+            PKG_QUERY="dpkg-query -W -f='\${Status}'"
+            DISTRO_COLOR="$SUCCESS"
+            DISTRO_LABEL="${PRETTY_NAME:-Debian/Ubuntu}"
+            ;;
+        arch)
+            PKG_MANAGER="pacman"
+            PKG_UPDATE="pacman -Sy --noconfirm"
+            PKG_UPGRADE="pacman -Su --noconfirm"
+            PKG_INSTALL="pacman -S --noconfirm --needed"
+            PKG_QUERY="pacman -Qi"
+            DISTRO_COLOR="$BANNER"
+            DISTRO_LABEL="${PRETTY_NAME:-Arch Linux}"
+            ;;
+        fedora)
+            PKG_MANAGER="dnf"
+            PKG_UPDATE="dnf check-update -q || true"
+            PKG_UPGRADE="dnf upgrade -y -q"
+            PKG_INSTALL="dnf install -y -q"
+            PKG_QUERY="rpm -q"
+            DISTRO_COLOR="$ACCENT"
+            DISTRO_LABEL="${PRETTY_NAME:-Fedora/RHEL}"
+            ;;
+        *)
+            PKG_MANAGER="unknown"
+            DISTRO_COLOR="$WARNING"
+            DISTRO_LABEL="${DISTRO_ID:-unknown}"
+            ;;
+    esac
+}
+
+# Show OS detection result after draw_header — handles unknown with warning + selection menu
+show_os_result() {
+    if [ "$DISTRO_FAMILY" != "unknown" ]; then
+        echo -e "\n   ${DISTRO_COLOR}✓ Detected OS: ${DISTRO_LABEL} [${DISTRO_FAMILY}/${PKG_MANAGER}]${RESET}"
+        log_message "OS detected: ${DISTRO_LABEL} [${DISTRO_FAMILY}/${PKG_MANAGER}]"
+    else
+        echo -e "\n   ${WARNING}⚠️  Could not automatically detect your Linux distribution.${RESET}"
+        echo -e "   ${INFO}Detected ID: ${DISTRO_ID:-unknown}${RESET}"
+        echo -e ""
+        echo -e "   ${WARNING}╔══════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "   ${WARNING}║  SELECT YOUR PACKAGE MANAGER CAREFULLY                       ║${RESET}"
+        echo -e "   ${WARNING}║                                                              ║${RESET}"
+        echo -e "   ${WARNING}║  An incorrect selection will cause dependency install        ║${RESET}"
+        echo -e "   ${WARNING}║  failures and may require a full redeploy to fix.            ║${RESET}"
+        echo -e "   ${WARNING}╚══════════════════════════════════════════════════════════════╝${RESET}"
+        echo -e ""
+        echo -e "   ${SUCCESS}1)${RESET} Debian / Ubuntu / DietPi / Raspbian  ${SUCCESS}(apt)${RESET}"
+        echo -e "   ${BANNER}2)${RESET} Arch / Manjaro / EndeavourOS          ${BANNER}(pacman)${RESET}"
+        echo -e "   ${ACCENT}3)${RESET} Fedora / RHEL / Rocky / AlmaLinux    ${ACCENT}(dnf)${RESET}"
+        echo -e ""
+        echo -ne "   Enter choice [1/2/3]: "
+        local _choice
+        read -r _choice
+        case "$_choice" in
+            1) DISTRO_FAMILY="debian" ;;
+            2) DISTRO_FAMILY="arch"   ;;
+            3) DISTRO_FAMILY="fedora" ;;
+            *)
+                echo -e "   ${ERROR}Invalid choice — defaulting to Debian/apt.${RESET}"
+                DISTRO_FAMILY="debian"
+                ;;
+        esac
+        _apply_distro_vars
+        echo -e "\n   ${DISTRO_COLOR}✓ Using: ${DISTRO_LABEL} [${DISTRO_FAMILY}/${PKG_MANAGER}]${RESET}"
+        log_message "OS manually selected: ${DISTRO_LABEL} [${DISTRO_FAMILY}/${PKG_MANAGER}]"
+    fi
+}
+
+# Install whiptail using the detected package manager
+install_whiptail() {
+    if command -v whiptail &>/dev/null; then return 0; fi
+    echo -e "   ${WARNING}Installing whiptail...${RESET}"
+    case "$DISTRO_FAMILY" in
+        debian)  $PKG_UPDATE -qq >/dev/null 2>&1; $PKG_INSTALL whiptail >/dev/null 2>&1 ;;
+        arch)    $PKG_INSTALL libnewt >/dev/null 2>&1 ;;
+        fedora)  $PKG_INSTALL newt >/dev/null 2>&1 ;;
+    esac
+}
 
 ################################################################################
 # UI FUNCTIONS                                                                 #
@@ -1006,17 +1206,47 @@ draw_footer() {
     read -r _
     echo -e ""
     echo -e "   ${INFO}Restarting Docker stack...${RESET}"
+    log_section "FINAL RESTART"
     if [ -z "$TARGET_DIR" ] || [ ! -d "$TARGET_DIR" ]; then
         echo -e "   ${ERROR}✗ Installation path not found — cannot restart stack automatically.${RESET}"
         echo -e "   ${INFO}Run manually: cd /path/to/matrix-stack && docker compose down && docker compose up -d${RESET}"
+        log_error "Restart failed — TARGET_DIR not found: ${TARGET_DIR:-unset}"
     else
-        cd "$TARGET_DIR" || { echo -e "   ${ERROR}✗ Could not cd to $TARGET_DIR${RESET}"; return 1; }
+        cd "$TARGET_DIR" || { echo -e "   ${ERROR}✗ Could not cd to $TARGET_DIR${RESET}"; log_error "Could not cd to $TARGET_DIR"; return 1; }
+
         echo -e "   ${INFO}Stopping containers...${RESET}"
-        docker compose down --remove-orphans </dev/tty >/dev/tty 2>/dev/tty
-        echo -e "   ${INFO}Starting containers...${RESET}"
-        docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
-        echo -e "   ${SUCCESS}✓ Stack restarted successfully.${RESET}\n"
+        log_cmd "docker compose down --remove-orphans"
+        docker compose down --remove-orphans
+        local down_rc=$?
+        [[ $down_rc -eq 0 ]] && log_ok "Containers stopped (exit 0)" || log_error "docker compose down exited $down_rc"
+
+        echo -e "\n${SUCCESS}>> Launching Matrix Stack...${RESET}"
+        log_cmd "docker compose up -d"
+        docker compose up -d
+        local up_rc=$?
+
+        if [[ $up_rc -eq 0 ]]; then
+            # Capture final container status for the log
+            local ps_out
+            ps_out=$(docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null)
+            log_ok "Stack restarted successfully (exit 0)"
+            log_message "Container status after restart:\n$ps_out"
+            echo -e "\n   ${SUCCESS}✓ Stack restarted successfully.${RESET}\n"
+        else
+            log_error "docker compose up -d exited $up_rc"
+            echo -e "\n   ${ERROR}✗ Stack restart may have failed — check: docker compose logs${RESET}\n"
+        fi
     fi
+
+    # Write log end marker — file only, not printed to terminal
+    log_end
+
+    # Terminal goodbye — not written to log
+    echo -e "${SUCCESS}════════════════════════════════════════════════════════════════════${RESET}"
+    echo -e "${SUCCESS}   Enjoy your Matrix stack!${RESET}"
+    echo -e "${SUCCESS}   Any issues? Open a ticket: https://github.com/zeMadCat/Matrix-docker-stack${RESET}"
+    echo -e "${SUCCESS}════════════════════════════════════════════════════════════════════${RESET}"
+    echo -e ""
 }
 
 ################################################################################
@@ -1205,8 +1435,11 @@ check_for_updates() {
 # Configure log rotation for Docker containers and Matrix stack
 setup_log_rotation() {
     echo -e "\n${ACCENT}>> Setting up log rotation for Docker containers...${RESET}"
-    
-    # Create logrotate configuration for Docker containers
+    log_section "STEP 10b: Log Rotation Setup"
+    log_message "Distro family: ${DISTRO_FAMILY:-unknown} | Target dir: ${TARGET_DIR:-unknown}"
+
+    # Drop-in: Docker container logs
+    log_cmd "cat > /etc/logrotate.d/docker-containers"
     cat > /etc/logrotate.d/docker-containers << 'LOGROTATEEOF'
 /var/lib/docker/containers/*/*.log {
     rotate 7
@@ -1218,8 +1451,10 @@ setup_log_rotation() {
     maxsize 100M
 }
 LOGROTATEEOF
+    log_ok "Written: /etc/logrotate.d/docker-containers (rotate 7, daily, compress, maxsize 100M)"
 
-    # Create specific configuration for Matrix stack logs
+    # Drop-in: Matrix stack logs
+    log_cmd "cat > /etc/logrotate.d/matrix-stack"
     cat > /etc/logrotate.d/matrix-stack << EOF
 ${TARGET_DIR:-/opt/stacks/matrix-stack}/**/*.log {
     rotate 7
@@ -1232,9 +1467,12 @@ ${TARGET_DIR:-/opt/stacks/matrix-stack}/**/*.log {
     create 0644 root root
 }
 EOF
+    log_ok "Written: /etc/logrotate.d/matrix-stack (path: ${TARGET_DIR:-/opt/stacks/matrix-stack})"
 
-    # Configure system-wide log rotation settings
-    cat > /etc/logrotate.conf << 'LOGROTATECONF'
+    # Write system-wide logrotate.conf only on Debian
+    if [[ "${DISTRO_FAMILY:-debian}" == "debian" ]]; then
+        log_cmd "cat > /etc/logrotate.conf (Debian only)"
+        cat > /etc/logrotate.conf << 'LOGROTATECONF'
 # System-wide logrotate configuration
 weekly
 rotate 4
@@ -1253,7 +1491,8 @@ include /etc/logrotate.d
     delaycompress
     compress
     postrotate
-        invoke-rc.d rsyslog rotate > /dev/null 2>&1 || true
+        /usr/lib/rsyslog/rsyslog-rotate 2>/dev/null || \
+        invoke-rc.d rsyslog rotate 2>/dev/null || true
     endscript
 }
 
@@ -1266,32 +1505,63 @@ include /etc/logrotate.d
     compress
 }
 LOGROTATECONF
+        log_ok "Written: /etc/logrotate.conf (Debian system-wide config)"
+    else
+        log_message "Skipped /etc/logrotate.conf overwrite — ${DISTRO_FAMILY} manages this file via package manager"
+    fi
 
-    # Test the configuration
-    if logrotate -d /etc/logrotate.conf > /dev/null 2>&1; then
+    # Locate the logrotate binary — Debian/Fedora: /usr/sbin, Arch: /usr/bin
+    local LOGROTATE_BIN
+    if command -v logrotate &>/dev/null; then
+        LOGROTATE_BIN=$(command -v logrotate)
+    else
+        LOGROTATE_BIN="/usr/sbin/logrotate"
+    fi
+    log_message "logrotate binary resolved: $LOGROTATE_BIN"
+
+    # Validate the drop-in config — capture output for the log
+    log_cmd "$LOGROTATE_BIN -d /etc/logrotate.d/docker-containers"
+    local rotate_test_output
+    rotate_test_output=$("$LOGROTATE_BIN" -d /etc/logrotate.d/docker-containers 2>&1)
+    local rotate_test_rc=$?
+    log_message "logrotate dry-run exit code: $rotate_test_rc"
+    if [[ -n "$rotate_test_output" ]]; then
+        # Filter to just the meaningful lines — skip "Creating new state" noise
+        local _trimmed
+        _trimmed=$(printf '%s' "$rotate_test_output" | grep -v "^Creating new state$\|^Allocating hash\|^Reading state\|^$" | head -20)
+        log_message "logrotate dry-run output (trimmed): $_trimmed"
+    fi
+
+    if [[ "$rotate_test_rc" -eq 0 ]]; then
         echo -e "   ${SUCCESS}✓ Log rotation configured successfully${RESET}"
-        
-        # Force an immediate rotation to test
-        logrotate -f /etc/logrotate.conf > /dev/null 2>&1 || true
-        
-        # Setup cron job for daily rotation
-        cat > /etc/cron.daily/logrotate << 'CRONEOF'
+        log_ok "logrotate config validated successfully"
+
+        # Force an initial rotation
+        log_cmd "$LOGROTATE_BIN -f /etc/logrotate.d/docker-containers"
+        "$LOGROTATE_BIN" -f /etc/logrotate.d/docker-containers > /dev/null 2>&1 || true
+        log_ok "Forced initial rotation completed"
+
+        # Write cron job using the resolved binary path
+        log_cmd "cat > /etc/cron.daily/logrotate"
+        cat > /etc/cron.daily/logrotate << CRONEOF
 #!/bin/sh
-/usr/sbin/logrotate /etc/logrotate.conf
-if [ $? -ne 0 ]; then
-    logger -t logrotate "Log rotation failed"
+${LOGROTATE_BIN} /etc/logrotate.d/docker-containers
+${LOGROTATE_BIN} /etc/logrotate.d/matrix-stack
+if [ \$? -ne 0 ]; then
+    logger -t logrotate "Matrix stack log rotation failed"
 fi
 CRONEOF
         chmod +x /etc/cron.daily/logrotate
-        
+        log_ok "Cron job written: /etc/cron.daily/logrotate (binary: $LOGROTATE_BIN)"
         echo -e "   ${INFO}ℹ  Daily log rotation scheduled via cron${RESET}"
-        
-        # Configure Docker daemon for better log handling
+
+        # Configure Docker daemon log limits
         mkdir -p /etc/docker
         if [ -f /etc/docker/daemon.json ]; then
             cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
+            log_message "Backed up existing daemon.json to /etc/docker/daemon.json.backup"
         fi
-        
+        log_cmd "cat > /etc/docker/daemon.json (max-size 100m, max-file 3)"
         cat > /etc/docker/daemon.json << 'DOCKERDAEMONEOF'
 {
   "log-driver": "json-file",
@@ -1301,22 +1571,20 @@ CRONEOF
   }
 }
 DOCKERDAEMONEOF
-        
-        # Restart Docker only if systemd is present and Docker is running
-        if command -v systemctl &>/dev/null; then
-            if systemctl is-active --quiet docker; then
-                systemctl restart docker 2>/dev/null
-                echo -e "   ${INFO}ℹ  Docker configured with log rotation (max-size 100m, max-file 3) — restarted${RESET}"
-            else
-                echo -e "   ${INFO}ℹ  Docker log rotation config written. Docker service not running — will apply on next start.${RESET}"
-            fi
-        else
-            echo -e "   ${INFO}ℹ  Docker log rotation config written. systemd not found — please restart Docker manually.${RESET}"
-        fi
-        
+        log_ok "Written: /etc/docker/daemon.json (max-size 100m, max-file 3)"
+
+        # No Docker daemon restart needed — the script's final restart (after DNS/NPM/port
+        # forwarding setup) brings the stack down and back up, so daemon.json log limits
+        # will be active from that point forward automatically.
+        log_message "daemon.json log limits will apply when the stack is restarted at the end of this script"
+        echo -e "   ${INFO}ℹ  Docker log limits set (max-size 100m, max-file 3)${RESET}"
+        echo -e "   ${INFO}ℹ  Limits will be active after the final stack restart${RESET}"
+
+        log_ok "Log rotation setup complete"
         return 0
     else
         echo -e "   ${ERROR}✗ Failed to configure log rotation${RESET}"
+        log_error "logrotate validation failed (exit $rotate_test_rc) — output: $rotate_test_output"
         return 1
     fi
 }
@@ -4162,6 +4430,17 @@ show_changelog() {
     echo -e "${ACCENT}v${SCRIPT_VERSION}${RESET} — latest"
     echo -e "${INFO}────────────────────────────────────────────${RESET}"
     echo -e ""
+    echo -e "  ${SUCCESS}•${RESET} Multi-distro support — Debian/Ubuntu, Arch Linux, Fedora/RHEL"
+    echo -e "  ${SUCCESS}•${RESET} OS auto-detection from /etc/os-release with manual fallback (1/2/3 menu)"
+    echo -e "  ${SUCCESS}•${RESET} Detected distro displayed in color — green (Debian), purple (Arch), cyan (Fedora)"
+    echo -e "  ${SUCCESS}•${RESET} Package manager abstracted — apt / pacman / dnf used throughout"
+    echo -e "  ${SUCCESS}•${RESET} Docker install method per distro — get-docker.sh / pacman / dnf repo"
+    echo -e "  ${SUCCESS}•${RESET} Docker group setup prompt on Arch/Fedora — auto-add user or show manual command"
+    echo -e "  ${SUCCESS}•${RESET} whiptail install abstracted — libnewt (Arch) / newt (Fedora) / whiptail (Debian)"
+    echo -e ""
+    echo -e "${ACCENT}v1.8${RESET} — 2026-03-09"
+    echo -e "${INFO}────────────────────────────────────────────${RESET}"
+    echo -e ""
     echo -e "  ${SUCCESS}•${RESET} Multi-stack support — install multiple independent stacks on one server"
     echo -e "  ${SUCCESS}•${RESET} Container/network name conflict detection — auto-appends -2, -3, etc."
     echo -e "  ${SUCCESS}•${RESET} Reconfigure menu — modify domain, features and bridges post-install"
@@ -6496,7 +6775,7 @@ run_uninstall() {
         # Multiple stacks found - use whiptail for selection
         if ! command -v whiptail &> /dev/null; then
             echo -e "${WARNING}Installing whiptail for selection menu...${RESET}"
-            apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+            install_whiptail
         fi
         
         echo -e "${INFO}Found ${#ALL_STACKS[@]} installations. Select which ones to delete:${RESET}"
@@ -6789,7 +7068,7 @@ run_add_bridges() {
         DIALOG_CMD="dialog"
     else
         echo -e "   ${WARNING}⚠️  Installing whiptail...${RESET}"
-        apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+        install_whiptail
         DIALOG_CMD="whiptail"
     fi
 
@@ -7137,19 +7416,21 @@ run_diagnostics() {
     # Strips ANSI codes and redacts secrets, IPs, domains, tokens, emails, paths
     _redact() {
         local text="$1"
-        # ANSI color codes
-        text=$(echo "$text" | sed 's/\x1b\[[0-9;]*m//g')
-        # Known in-memory secrets (only if set)
-        [ -n "$ADMIN_PASS" ]            && text=$(echo "$text" | sed "s|${ADMIN_PASS}|[REDACTED_PASSWORD]|g")
-        [ -n "$DB_PASS" ]               && text=$(echo "$text" | sed "s|${DB_PASS}|[REDACTED_DB_PASSWORD]|g")
-        [ -n "$REG_SECRET" ]            && text=$(echo "$text" | sed "s|${REG_SECRET}|[REDACTED_REG_SECRET]|g")
-        [ -n "$MAS_SECRET" ]            && text=$(echo "$text" | sed "s|${MAS_SECRET}|[REDACTED_MAS_SECRET]|g")
-        [ -n "$MAS_ENCRYPTION_SECRET" ] && text=$(echo "$text" | sed "s|${MAS_ENCRYPTION_SECRET}|[REDACTED_MAS_ENC_SECRET]|g")
-        [ -n "$LK_API_KEY" ]            && text=$(echo "$text" | sed "s|${LK_API_KEY}|[REDACTED_LK_KEY]|g")
-        [ -n "$LK_API_SECRET" ]         && text=$(echo "$text" | sed "s|${LK_API_SECRET}|[REDACTED_LK_SECRET]|g")
-        [ -n "$SLIDING_SYNC_SECRET" ]   && text=$(echo "$text" | sed "s|${SLIDING_SYNC_SECRET}|[REDACTED_SS_SECRET]|g")
-        [ -n "$NPM_ADMIN_PASS" ]        && text=$(echo "$text" | sed "s|${NPM_ADMIN_PASS}|[REDACTED_NPM_PASSWORD]|g")
-        [ -n "$PANGOLIN_NEWT_SECRET" ]  && text=$(echo "$text" | sed "s|${PANGOLIN_NEWT_SECRET}|[REDACTED_PANGOLIN_SECRET]|g")
+        # ANSI color codes — real ESC bytes and literal \033 strings
+        text=$(printf '%s' "$text" | sed 's/\x1b\[[0-9;]*[mGKHFJABCDsu]//g; s/\x1b(B//g')
+        text=$(printf '%s' "$text" | tr -d $'\033')
+        text=$(printf '%s' "$text" | sed 's/\\033\[[0-9;]*[mGKHFJABCDsu]//g; s/\\033(B//g; s/\\033//g')
+        # Known in-memory secrets — safe guards, special chars escaped
+        [[ -n "${ADMIN_PASS:-}"            ]] && text=$(_redact_val "$text" "$ADMIN_PASS"            "[REDACTED_PASSWORD]")
+        [[ -n "${DB_PASS:-}"               ]] && text=$(_redact_val "$text" "$DB_PASS"               "[REDACTED_DB_PASSWORD]")
+        [[ -n "${REG_SECRET:-}"            ]] && text=$(_redact_val "$text" "$REG_SECRET"            "[REDACTED_REG_SECRET]")
+        [[ -n "${MAS_SECRET:-}"            ]] && text=$(_redact_val "$text" "$MAS_SECRET"            "[REDACTED_MAS_SECRET]")
+        [[ -n "${MAS_ENCRYPTION_SECRET:-}" ]] && text=$(_redact_val "$text" "$MAS_ENCRYPTION_SECRET" "[REDACTED_MAS_ENC_SECRET]")
+        [[ -n "${LK_API_KEY:-}"            ]] && text=$(_redact_val "$text" "$LK_API_KEY"            "[REDACTED_LK_KEY]")
+        [[ -n "${LK_API_SECRET:-}"         ]] && text=$(_redact_val "$text" "$LK_API_SECRET"         "[REDACTED_LK_SECRET]")
+        [[ -n "${SLIDING_SYNC_SECRET:-}"   ]] && text=$(_redact_val "$text" "$SLIDING_SYNC_SECRET"   "[REDACTED_SS_SECRET]")
+        [[ -n "${NPM_ADMIN_PASS:-}"        ]] && text=$(_redact_val "$text" "$NPM_ADMIN_PASS"        "[REDACTED_NPM_PASSWORD]")
+        [[ -n "${PANGOLIN_NEWT_SECRET:-}"  ]] && text=$(_redact_val "$text" "$PANGOLIN_NEWT_SECRET"  "[REDACTED_PANGOLIN_SECRET]")
         # Generic secret/token/password patterns in YAML/env format
         text=$(echo "$text" | sed \
             -e 's/\(secret\s*[:=]\s*\)[^ \t\n"'\'']*/\1[REDACTED]/gi' \
@@ -7471,7 +7752,7 @@ run_verify() {
     else
         # Multiple stacks — whiptail selector
         if ! command -v whiptail &>/dev/null; then
-            apt-get update -qq && apt-get install -y whiptail -qq >/dev/null 2>&1
+            install_whiptail
         fi
         local _wt_items=()
         for _i in "${!all_stacks[@]}"; do
@@ -7695,105 +7976,250 @@ main_deployment() {
     NPM_MGMT_PORT=81
 
     draw_header
-    
+
+    # ── OS Detection already done at startup — log it here for the deployment record
+    log_section "STEP 1: System Preparation"
+    log_message "OS: ${DISTRO_LABEL} family=${DISTRO_FAMILY} pkg=${PKG_MANAGER}"
+    log_message "Kernel: $(uname -r) | Arch: $(uname -m)"
+    echo -e "\n${DISTRO_COLOR}   Distro: ${DISTRO_LABEL} [${DISTRO_FAMILY}/${PKG_MANAGER}]${RESET}"
+
     echo -e "\n${ACCENT}>> Checking for system package updates...${RESET}"
-    apt update 2>/dev/null > /dev/null
-    UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -c upgradable || true)
-    
-    if ! [[ "$UPGRADABLE" =~ ^[0-9]+$ ]]; then
-        UPGRADABLE=0
-    fi
-    
-    if [ "$UPGRADABLE" -gt 0 ]; then
-        echo -e "   ${INFO}Found $UPGRADABLE package(s) that can be upgraded${RESET}"
-        echo -e "   ${ACCENT}>> Updating system packages...${RESET}"
-        apt upgrade -y 2>/dev/null > /dev/null
-        echo -e "   ${SUCCESS}✓ System packages updated successfully${RESET}"
-    else
-        echo -e "   ${SUCCESS}✓ System is already up to date${RESET}"
-    fi
+    log_message "Running system package update (${PKG_MANAGER})"
+    case "$DISTRO_FAMILY" in
+        debian)
+            log_cmd "apt-get update"
+            $PKG_UPDATE >/dev/null 2>&1
+            UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -c upgradable || true)
+            if ! [[ "$UPGRADABLE" =~ ^[0-9]+$ ]]; then UPGRADABLE=0; fi
+            if [ "$UPGRADABLE" -gt 0 ]; then
+                echo -e "   ${INFO}Found $UPGRADABLE package(s) that can be upgraded${RESET}"
+                echo -e "   ${ACCENT}>> Updating system packages...${RESET}"
+                $PKG_UPGRADE >/dev/null 2>&1
+                echo -e "   ${SUCCESS}✓ System packages updated successfully${RESET}"
+            else
+                echo -e "   ${SUCCESS}✓ System is already up to date${RESET}"
+            fi
+            ;;
+        arch)
+            log_cmd "pacman -Sy --noconfirm"
+            $PKG_UPDATE >/dev/null 2>&1
+            log_ok "Package database synced"
+            echo -e "   ${SUCCESS}✓ Package database synced${RESET}"
+            ;;
+        fedora)
+            log_cmd "dnf check-update"
+            eval "$PKG_UPDATE" >/dev/null 2>&1
+            log_ok "Package database checked"
+            echo -e "   ${SUCCESS}✓ Package database checked${RESET}"
+            ;;
+    esac
 
     echo -e "\n${ACCENT}>> Installing required dependencies...${RESET}"
-    local deps=("curl" "wget" "openssl" "jq" "python3" "logrotate")
-    local coreutils_check=$(dpkg-query -W -f='${Status}' coreutils 2>/dev/null | grep -c "ok installed" || echo "0")
-    local to_install=()
-    
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" >/dev/null 2>&1 && [ "$dep" != "logrotate" ]; then
-            to_install+=("$dep")
-        fi
-    done
-    
-    if ! command -v logrotate >/dev/null 2>&1 && ! dpkg-query -W -f='${Status}' logrotate 2>/dev/null | grep -q "ok installed"; then
-        to_install+=("logrotate")
-    fi
-    
-    if [ "$coreutils_check" -eq 0 ]; then
-        to_install+=("coreutils")
-    fi
-    
-    if [ ${#to_install[@]} -gt 0 ]; then
-        echo -e "   ${INFO}Installing missing dependencies: ${to_install[*]}${RESET}"
-        apt install -y "${to_install[@]}" > /dev/null 2>&1
-        echo -e "   ${SUCCESS}✓ Dependencies installed${RESET}"
-    else
-        echo -e "   ${SUCCESS}✓ All dependencies already present${RESET}"
-    fi
+    log_message "Checking and installing required dependencies"
+    case "$DISTRO_FAMILY" in
+        debian)
+            # iproute2  — ip + ss commands (network detection, port scanning)
+            # bsdutils  — logger command (used in log rotation cron job)
+            # cron      — runs /etc/cron.daily for log rotation
+            # python3-yaml — YAML config validation
+            local pkgs=(
+                "curl" "wget" "openssl" "jq"
+                "python3" "python3-yaml"
+                "logrotate" "coreutils"
+                "iproute2" "bsdutils" "cron"
+            )
+            local to_install=()
+            for pkg in "${pkgs[@]}"; do
+                if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+                    to_install+=("$pkg")
+                fi
+            done
+            if [ ${#to_install[@]} -gt 0 ]; then
+                log_message "Installing: ${to_install[*]}"
+                echo -e "   ${INFO}Installing: ${to_install[*]}${RESET}"
+                $PKG_INSTALL "${to_install[@]}" >/dev/null 2>&1
+                log_ok "Dependencies installed: ${to_install[*]}"
+                echo -e "   ${SUCCESS}✓ Dependencies installed${RESET}"
+            else
+                log_ok "All dependencies already present"
+                echo -e "   ${SUCCESS}✓ All dependencies already present${RESET}"
+            fi
+            ;;
+        arch)
+            # iproute2  — ip + ss commands
+            # util-linux — logger command
+            # cronie    — cron daemon for /etc/cron.daily
+            # python-yaml — YAML config validation (PyYAML)
+            # Note: python3 binary comes from the 'python' package on Arch
+            local pkgs=(
+                "curl" "wget" "openssl" "jq"
+                "python" "python-yaml"
+                "logrotate" "coreutils"
+                "iproute2" "util-linux" "cronie"
+            )
+            local to_install=()
+            for pkg in "${pkgs[@]}"; do
+                if ! pacman -Qi "$pkg" >/dev/null 2>&1; then
+                    to_install+=("$pkg")
+                fi
+            done
+            if [ ${#to_install[@]} -gt 0 ]; then
+                log_message "Installing: ${to_install[*]}"
+                echo -e "   ${INFO}Installing: ${to_install[*]}${RESET}"
+                $PKG_INSTALL "${to_install[@]}" >/dev/null 2>&1
+                # Enable cronie if just installed
+                systemctl enable --now cronie 2>/dev/null || true
+                log_ok "Dependencies installed: ${to_install[*]}"
+                echo -e "   ${SUCCESS}✓ Dependencies installed${RESET}"
+            else
+                log_ok "All dependencies already present"
+                echo -e "   ${SUCCESS}✓ All dependencies already present${RESET}"
+            fi
+            ;;
+        fedora)
+            # iproute   — ip + ss commands (package name differs from Arch/Debian)
+            # util-linux — logger command
+            # cronie    — cron daemon for /etc/cron.daily
+            # python3-pyyaml — YAML config validation
+            local pkgs=(
+                "curl" "wget" "openssl" "jq"
+                "python3" "python3-pyyaml"
+                "logrotate" "coreutils"
+                "iproute" "util-linux" "cronie"
+            )
+            local to_install=()
+            for pkg in "${pkgs[@]}"; do
+                if ! rpm -q "$pkg" >/dev/null 2>&1; then
+                    to_install+=("$pkg")
+                fi
+            done
+            if [ ${#to_install[@]} -gt 0 ]; then
+                log_message "Installing: ${to_install[*]}"
+                echo -e "   ${INFO}Installing: ${to_install[*]}${RESET}"
+                $PKG_INSTALL "${to_install[@]}" >/dev/null 2>&1
+                # Enable cronie if just installed
+                systemctl enable --now crond 2>/dev/null || true
+                log_ok "Dependencies installed: ${to_install[*]}"
+                echo -e "   ${SUCCESS}✓ Dependencies installed${RESET}"
+            else
+                log_ok "All dependencies already present"
+                echo -e "   ${SUCCESS}✓ All dependencies already present${RESET}"
+            fi
+            ;;
+    esac
 
     ############################################################################
     # STEP 2: Docker Environment Audit                                        #
     ############################################################################
-    
+
+    log_section "STEP 2: Docker Environment Audit"
     echo -e "\n${ACCENT}>> Auditing Docker environment...${RESET}"
     DOCKER_READY=false
-    
+
     if command -v docker >/dev/null 2>&1; then
         DOCKER_VERSION=$(docker --version | awk '{print $3}' | tr -d ',')
         echo -e "   • ${DOCKER_COLOR}Docker:${RESET}          ${SUCCESS}Found${RESET} (${DOCKER_VERSION})"
+        log_ok "Docker found: $DOCKER_VERSION"
         DOCKER_READY=true
+    else
+        log_warn "Docker not found"
     fi
 
     if docker compose version >/dev/null 2>&1; then
         COMPOSE_VERSION=$(docker compose version | awk '{print $4}')
         echo -e "   • ${DOCKER_COLOR}Docker Compose:${RESET}  ${SUCCESS}Found${RESET} (${COMPOSE_VERSION})"
+        log_ok "Docker Compose found: $COMPOSE_VERSION"
     else
         echo -e "   • ${DOCKER_COLOR}Docker Compose:${RESET}  ${ERROR}Not Found${RESET}"
+        log_warn "Docker Compose not found"
         DOCKER_READY=false
     fi
+
+    # Helper: install Docker using the correct method for detected distro
+    _install_docker() {
+        case "$DISTRO_FAMILY" in
+            debian)
+                # Official get.docker.com convenience script — works on all Debian/Ubuntu variants
+                local docker_install_script="/tmp/get-docker.sh"
+                curl -fsSL https://get.docker.com -o "$docker_install_script"
+                sh "$docker_install_script" </dev/tty >/dev/tty 2>/dev/tty
+                rm -f "$docker_install_script"
+                ;;
+            arch)
+                # docker and docker-buildx are in official Arch repos; compose plugin via docker-compose
+                $PKG_INSTALL docker docker-compose </dev/tty >/dev/tty 2>/dev/tty
+                systemctl enable --now docker
+                ;;
+            fedora)
+                # Docker's official DNF repo
+                $PKG_INSTALL dnf-plugins-core -q >/dev/null 2>&1
+                dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo >/dev/null 2>&1
+                $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-compose-plugin </dev/tty >/dev/tty 2>/dev/tty
+                systemctl enable --now docker
+                ;;
+        esac
+    }
+
+    # Helper: offer to add a non-root user to the docker group
+    _handle_docker_group() {
+        echo -e "\n${ACCENT}>> Docker group setup${RESET}"
+        echo -e "   ${INFO}On ${DISTRO_LABEL}, non-root users need to be in the 'docker' group to use Docker without sudo.${RESET}"
+        echo -e "   ${INFO}The script runs as root so the deployment will work fine either way.${RESET}"
+        echo -e ""
+        echo -e "   ${SUCCESS}1)${RESET} Automatically add a user to the docker group now"
+        echo -e "   ${INFO}2)${RESET} Skip — I'll do it manually later"
+        echo -ne "\n   Enter choice [1/2]: "
+        local _grp_choice
+        read -r _grp_choice
+        case "$_grp_choice" in
+            1)
+                echo -ne "   ${ACCENT}Enter username to add to docker group: ${RESET}"
+                local _docker_user
+                read -r _docker_user
+                if id "$_docker_user" >/dev/null 2>&1; then
+                    usermod -aG docker "$_docker_user"
+                    echo -e "   ${SUCCESS}✓ User '$_docker_user' added to docker group${RESET}"
+                    echo -e "   ${WARNING}⚠  They will need to log out and back in for this to take effect.${RESET}"
+                else
+                    echo -e "   ${ERROR}✗ User '$_docker_user' not found — skipping.${RESET}"
+                fi
+                ;;
+            *)
+                echo -e "   ${INFO}Skipped. To add a user manually:${RESET}"
+                echo -e "   ${WARNING}sudo usermod -aG docker YOUR_USERNAME${RESET}"
+                echo -e "   ${INFO}Then log out and back in, or run: ${WARNING}newgrp docker${RESET}"
+                echo -e ""
+                echo -ne "   ${ACCENT}Press [ENTER] to continue...${RESET} "
+                read -r _
+                ;;
+        esac
+    }
 
     DOCKGE_FOUND=false
     if [ -n "$(docker ps -qf name=dockge 2>/dev/null)" ] || [ -d "/opt/stacks" ]; then
         echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${SUCCESS}Detected${RESET}"
         DOCKGE_FOUND=true
-    elif [ "$DOCKER_READY" = true ]; then
-        echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
-        ask_yn INST_DOCKGE "Install Dockge? (y/n): "
-        if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
-            echo -e "\n${ACCENT}>> Installing Dockge...${RESET}"
-            mkdir -p /opt/dockge /opt/stacks
-            curl -fsSL https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output /opt/dockge/compose.yaml
-            cd /opt/dockge && docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
-            cd - > /dev/null
-            echo -e "\n${SUCCESS}\u2713 Dockge installed and running.${RESET}"
-            DOCKGE_FOUND=true
-        else
-            echo -e "\n${WARNING}Dockge skipped.${RESET}"
-        fi
     else
         echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
+    fi
+
+    # If Docker + Compose are already present, skip all install prompts entirely
+    if [[ "$DOCKER_READY" == "true" ]]; then
+        log_ok "Docker and Docker Compose already installed — skipping install prompts"
+        echo -e "   ${SUCCESS}✓ Docker environment ready — skipping install step${RESET}"
+    else
+        # Docker not found — offer Dockge or standalone Docker install
         ask_yn INST_DOCKGE "Install Dockge (includes Docker & Compose)? (y/n): "
         if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
             echo -e "\n${ACCENT}>> Installing Docker...${RESET}"
-            local docker_install_script="/tmp/get-docker.sh"
-            curl -fsSL https://get.docker.com -o "$docker_install_script"
-            sh "$docker_install_script" </dev/tty >/dev/tty 2>/dev/tty
-            rm -f "$docker_install_script"
+            _install_docker
+            [[ "$DISTRO_FAMILY" != "debian" ]] && _handle_docker_group
             echo -e "\n${ACCENT}>> Installing Dockge...${RESET}"
             mkdir -p /opt/dockge /opt/stacks
             curl -fsSL https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output /opt/dockge/compose.yaml
             cd /opt/dockge && docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
             cd - > /dev/null
-            echo -e "\n${SUCCESS}\u2713 Dockge installed and running.${RESET}"
+            echo -e "\n${SUCCESS}✓ Dockge installed and running.${RESET}"
             DOCKGE_FOUND=true
             DOCKER_READY=true
         else
@@ -7802,20 +8228,18 @@ main_deployment() {
             ask_yn INST_DOCKER_ONLY "Install Docker & Compose only (without Dockge)? (y/n): "
             if [[ "$INST_DOCKER_ONLY" =~ ^[Yy]$ ]]; then
                 echo -e "\n${ACCENT}>> Installing Docker...${RESET}"
-                local docker_install_script="/tmp/get-docker.sh"
-                curl -fsSL https://get.docker.com -o "$docker_install_script"
-                sh "$docker_install_script" </dev/tty >/dev/tty 2>/dev/tty
-                rm -f "$docker_install_script"
-                echo -e "\n${SUCCESS}\u2713 Docker installed.${RESET}"
+                _install_docker
+                [[ "$DISTRO_FAMILY" != "debian" ]] && _handle_docker_group
+                echo -e "\n${SUCCESS}✓ Docker installed.${RESET}"
                 DOCKER_READY=true
             else
-                echo -e "\n${ERROR}\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557${RESET}"
-                echo -e "${ERROR}\u2551  Docker is required to deploy the Matrix stack.              \u2551${RESET}"
-                echo -e "${ERROR}\u2551  Without it, containers cannot be built or run.              \u2551${RESET}"
-                echo -e "${ERROR}\u2551                                                              \u2551${RESET}"
-                echo -e "${ERROR}\u2551  Please install Docker manually and re-run this script:      \u2551${RESET}"
-                echo -e "${ERROR}\u2551  https://docs.docker.com/engine/install/                     \u2551${RESET}"
-                echo -e "${ERROR}\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n${RESET}"
+                echo -e "\n${ERROR}╔══════════════════════════════════════════════════════════════╗${RESET}"
+                echo -e "${ERROR}║  Docker is required to deploy the Matrix stack.              ║${RESET}"
+                echo -e "${ERROR}║  Without it, containers cannot be built or run.              ║${RESET}"
+                echo -e "${ERROR}║                                                              ║${RESET}"
+                echo -e "${ERROR}║  Please install Docker manually and re-run this script:      ║${RESET}"
+                echo -e "${ERROR}║  https://docs.docker.com/engine/install/                     ║${RESET}"
+                echo -e "${ERROR}╚══════════════════════════════════════════════════════════════╝${RESET}"
                 exit 1
             fi
         fi
@@ -7824,72 +8248,92 @@ main_deployment() {
     ############################################################################
     # STEP 3: Network Detection                                               #
     ############################################################################
-    
+
+    log_section "STEP 3: Network Detection"
     echo -e "\n${ACCENT}>> Detecting network addresses...${RESET}"
     
     # Check if user is behind a VPN/proxy/tunnel
     ask_yn USER_HAS_VPN "Are you behind a VPN, proxy, or tunnel? (y/n): "
     
-    if command -v curl >/dev/null 2>&1; then
-        RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org 2>/dev/null || curl -sL --max-time 5 https://ifconfig.me/ip 2>/dev/null)
-    elif command -v wget >/dev/null 2>&1; then
-        RAW_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me/ip 2>/dev/null)
-    fi
-    
-    DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-    DETECTED_LOCAL=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)
-    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
-    
-    # Now show VPN guide AFTER IPs are detected
-    if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
-        show_vpn_setup_guide
-    else
-        echo -e "   ${SUCCESS}✓ No VPN detected, proceeding with normal setup${RESET}"
+    # Network detection loop — allows re-detection or back from manual entry
+    while true; do
+        if command -v curl >/dev/null 2>&1; then
+            RAW_IP=$(curl -sL --max-time 5 https://api.ipify.org 2>/dev/null || curl -sL --max-time 5 https://ifconfig.me/ip 2>/dev/null)
+        elif command -v wget >/dev/null 2>&1; then
+            RAW_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me/ip 2>/dev/null)
+        fi
+
+        DETECTED_PUBLIC=$(echo "$RAW_IP" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+        DETECTED_LOCAL=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)
+        [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
+        [[ -z "$DETECTED_LOCAL" ]] && DETECTED_LOCAL=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+
+        # Show VPN guide here so IPs are already detected and displayed in it
+        if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
+            show_vpn_setup_guide
+        else
+            echo -e "   ${SUCCESS}✓ No VPN detected, proceeding with normal setup${RESET}"
+            echo -e ""
+        fi
+
+        echo -e "   ${INFO}Enter the IP that EXTERNAL servers see (not your VPN tunnel IP)${RESET}"
+        echo -e "   ${INFO}This is typically your ISP's IP, exit node IP, or proxy IP${RESET}"
         echo -e ""
-    fi
-    
-    echo -e "\n${WARNING}⚠️  IMPORTANT: Use Correct IP${RESET}"
-    echo -e "   ${INFO}Enter the IP that EXTERNAL servers see (not your VPN tunnel IP)${RESET}"
-    echo -e "   ${INFO}This is typically your ISP's IP, exit node IP, or proxy IP${RESET}"
-    echo -e ""
-    
-    echo -e "   ${INFO}Detected External IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
-    echo -e "   ${INFO}Detected Local IP:${RESET}   ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
-    
-    if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
-        echo -e "   ${WARNING}(If external IP looks private like 10.x or 172.x, you're still behind VPN)${RESET}"
-    fi
-    echo -e ""
-    
-    # If automatic detection failed, ask manually
-    if [ -z "$DETECTED_PUBLIC" ] || [ -z "$DETECTED_LOCAL" ]; then
-        echo -e "\n${WARNING}⚠️  Automatic IP detection failed.${RESET}"
-        echo -ne "Enter Public IP manually: ${WARNING}"
-        read -r AUTO_PUBLIC_IP
-        echo -e "${RESET}"
-        echo -ne "Enter Local IP manually: ${WARNING}"
-        read -r AUTO_LOCAL_IP
-        echo -e "${RESET}"
-    else
+        echo -e "   ${INFO}Detected External IP:${RESET} ${PUBLIC_IP_COLOR}${DETECTED_PUBLIC:-Not detected}${RESET}"
+        echo -e "   ${INFO}Detected Local IP:${RESET}   ${LOCAL_IP_COLOR}${DETECTED_LOCAL:-Not detected}${RESET}"
+        if [[ "$USER_HAS_VPN" =~ ^[Yy]$ ]]; then
+            echo -e "   ${WARNING}(If external IP looks private like 10.x or 172.x, you're still behind VPN)${RESET}"
+        fi
+        echo -e ""
+
+        # If automatic detection failed entirely, go straight to manual entry
+        if [ -z "$DETECTED_PUBLIC" ] || [ -z "$DETECTED_LOCAL" ]; then
+            echo -e "\n${WARNING}⚠️  Automatic IP detection failed.${RESET}"
+            echo -ne "Enter Public IP manually: ${WARNING}"
+            read -r AUTO_PUBLIC_IP
+            echo -e "${RESET}"
+            echo -ne "Enter Local IP manually: ${WARNING}"
+            read -r AUTO_LOCAL_IP
+            echo -e "${RESET}"
+            break
+        fi
+
         ask_yn IP_CONFIRM "Use these IPs for deployment? (y/n): "
         if [[ "$IP_CONFIRM" =~ ^[Yy]$ ]]; then
             AUTO_PUBLIC_IP=$DETECTED_PUBLIC
             AUTO_LOCAL_IP=$DETECTED_LOCAL
+            break
         else
-            echo -ne "Enter Public IP: ${WARNING}"
+            # Manual entry — typing 'back' or 'b' at either prompt re-runs detection
+            echo -ne "Enter Public IP [or 'back' to re-detect]: ${WARNING}"
             read -r AUTO_PUBLIC_IP
             echo -e "${RESET}"
-            echo -ne "Enter Local IP: ${WARNING}"
+            if [[ "$AUTO_PUBLIC_IP" =~ ^[Bb](ack)?$ ]]; then
+                echo -e "   ${INFO}Re-detecting...${RESET}"
+                continue
+            fi
+            echo -ne "Enter Local IP [or 'back' to re-detect]: ${WARNING}"
             read -r AUTO_LOCAL_IP
             echo -e "${RESET}"
+            if [[ "$AUTO_LOCAL_IP" =~ ^[Bb](ack)?$ ]]; then
+                echo -e "   ${INFO}Re-detecting...${RESET}"
+                continue
+            fi
+            # Validate both are filled
+            if [[ -z "$AUTO_PUBLIC_IP" ]] || [[ -z "$AUTO_LOCAL_IP" ]]; then
+                echo -e "   ${ERROR}Both IPs are required — please try again.${RESET}"
+                continue
+            fi
+            break
         fi
-    fi
+    done
+    log_message "Public IP: $AUTO_PUBLIC_IP | Local IP: $AUTO_LOCAL_IP | VPN: ${USER_HAS_VPN:-n}"
 
     ############################################################################
     # STEP 4: Smart Conflict Detection & Cleanup                              #
     ############################################################################
 
+    log_section "STEP 4: Conflict Detection and Cleanup"
     echo -e "\n${ACCENT}>> Scanning for existing Matrix resources...${RESET}"
 
     scan_and_remove_matrix_resources
@@ -7902,6 +8346,7 @@ main_deployment() {
         # STEP 5: Deployment Path Selection                                       #
     ############################################################################
 
+    log_section "STEP 5: Deployment Path Selection"
     echo -e "\n${ACCENT}>> Checking storage availability...${RESET}"
 
     # Function to convert bytes to human readable
@@ -8106,21 +8551,28 @@ main_deployment() {
     if [ -d "$TARGET_DIR" ] && [ "$TARGET_DIR" != "$stack_dir" ]; then
         rm -rf "$TARGET_DIR"
     fi
-    
+
+    log_message "Deployment path selected: $TARGET_DIR"
+    local _disk_path="$TARGET_DIR"
+    [ ! -d "$_disk_path" ] && _disk_path=$(dirname "$TARGET_DIR")
+    local _disk_free _disk_dev
+    _disk_free=$(df -h "$_disk_path" 2>/dev/null | tail -1 | awk '{print $4}')
+    _disk_dev=$(df -h "$_disk_path" 2>/dev/null | tail -1 | awk '{print $1}')
+    log_message "Available disk: ${_disk_free:-unknown} free on ${_disk_dev:-unknown}"
+
     # Create base directory FIRST before setting up logging
     mkdir -p "$TARGET_DIR"
-    
-    # Setup comprehensive logging now that TARGET_DIR exists
-    setup_logging
-    log_message "═════════════════════════════════════════════════════════════════════"
-    log_message "Matrix Stack Deployment Started"
-    log_message "Target Directory: $TARGET_DIR"
-    log_message "═════════════════════════════════════════════════════════════════════"
 
-    # Redirect all subsequent output to both console and log file
-    # This captures the entire deployment process
-    exec 1> >(tee >(sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"))
-    exec 2> >(tee >(sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE") >&2)
+    # Setup logging — this also flushes all buffered entries from Steps 1-5
+    setup_logging
+    log_section "DEPLOYMENT START (log file ready — buffered entries above flushed)"
+    log_message "Script version:  $SCRIPT_VERSION"
+    log_message "Target dir:      $TARGET_DIR"
+    log_message "Hostname:        $(hostname)"
+    log_message "Kernel:          $(uname -r)"
+    log_message "Distro:          ${DISTRO_LABEL:-unknown} [${DISTRO_FAMILY:-unknown}] pkg=${PKG_MANAGER:-unknown}"
+    log_message "Docker:          $(docker --version 2>/dev/null || echo 'not found')"
+    log_message "Compose:         $(docker compose version 2>/dev/null || echo 'not found')"
 
     # Create remaining directory structure
     mkdir -p "$TARGET_DIR/synapse" \
@@ -8128,11 +8580,13 @@ main_deployment() {
              "$TARGET_DIR/postgres_init" \
              "$TARGET_DIR/livekit" \
              "$TARGET_DIR/mas"
+    log_message "Directory structure created under $TARGET_DIR"
 
     ############################################################################
     # STEP 6: Service Configuration                                           #
     ############################################################################
 
+    log_section "STEP 6: Service Configuration"
 echo -e "\n${ACCENT}>> Configuring services...${RESET}"
 
     ############################################################################
@@ -8251,7 +8705,7 @@ fi
             DIALOG_CMD="dialog"
         else
             echo -e "   ${WARNING}⚠️  Installing whiptail for interactive menu...${RESET}"
-            apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+            install_whiptail
             DIALOG_CMD="whiptail"
         fi
 
@@ -8835,6 +9289,22 @@ PROXY_IP="$AUTO_LOCAL_IP"
         NPM_ADMIN_EMAIL="admin@${DOMAIN}"
     fi
 
+    log_section "STEP 6: Service Configuration Summary"
+    log_message "Domain:          $DOMAIN"
+    log_message "Server name:     $SERVER_NAME"
+    log_message "Admin user:      $ADMIN_USER"
+    log_message "Admin pass:      [REDACTED_PASSWORD]"
+    log_message "Proxy type:      $PROXY_TYPE (already running: $PROXY_ALREADY_RUNNING)"
+    log_message "Registration:    ${MAS_REGISTRATION:-unknown}"
+    log_message "Sliding sync:    $SLIDING_SYNC_ENABLED"
+    log_message "Media repo:      $MEDIA_REPO_ENABLED"
+    log_message "Element Call:    $ELEMENT_CALL_ENABLED"
+    log_message "Element Admin:   $ELEMENT_ADMIN_ENABLED"
+    log_message "Synapse Admin:   $SYNAPSE_ADMIN_ENABLED"
+    log_message "Bridges:         ${SELECTED_BRIDGES[*]:-none}"
+    log_message "Port offset:     ${PORT_OFFSET:-0}"
+    log_message "Subdomains:      matrix=$SUB_MATRIX auth=$SUB_MAS livekit=$SUB_LIVEKIT element=$SUB_ELEMENT"
+
     ############################################################################
     # STEP 7: Generate All Configuration Files                                #
     ############################################################################
@@ -8868,6 +9338,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     generate_postgres_init
     log_message "PostgreSQL init scripts written"
     generate_docker_compose
+    COMPOSE_FILE="$TARGET_DIR/compose.yaml"
     log_message "Docker Compose file written: $COMPOSE_FILE"
     generate_synapse_config
     log_message "Synapse homeserver.yaml written: $TARGET_DIR/synapse/homeserver.yaml"
@@ -8899,10 +9370,22 @@ PROXY_IP="$AUTO_LOCAL_IP"
     ############################################################################
 
     log_section "STEP 8: Launching Docker Stack"
-    log_message "Running: docker compose down --remove-orphans (cleanup)"
+    log_message "Compose file:    $COMPOSE_FILE"
+    log_message "Stack dir:       $TARGET_DIR"
+    local _svc_list="synapse, matrix-auth, element-web, livekit, livekit-jwt, postgres, coturn"
+    [[ "$ELEMENT_CALL_ENABLED"  == "true" ]] && _svc_list="$_svc_list, element-call"
+    [[ "$SLIDING_SYNC_ENABLED"  == "true" ]] && _svc_list="$_svc_list, sliding-sync"
+    [[ "$MEDIA_REPO_ENABLED"    == "true" ]] && _svc_list="$_svc_list, matrix-media-repo"
+    [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]] && _svc_list="$_svc_list, element-admin"
+    [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]] && _svc_list="$_svc_list, synapse-admin"
+    [[ ${#SELECTED_BRIDGES[@]} -gt 0     ]] && _svc_list="$_svc_list, bridges: ${SELECTED_BRIDGES[*]}"
+    log_message "Services:        $_svc_list"
+    log_message "Proxy type:      $PROXY_TYPE (already running: $PROXY_ALREADY_RUNNING)"
+    log_message "Ports:           synapse=$PORT_SYNAPSE mas=$PORT_MAS element-web=$PORT_ELEMENT_WEB livekit=$PORT_LIVEKIT"
+    log_cmd "cd $TARGET_DIR && docker compose down --remove-orphans"
 
     echo -e "\n${SUCCESS}>> Launching Matrix Stack...${RESET}"
-    
+
     # Export all port variables for docker-compose
     export PORT_SYNAPSE PORT_SYNAPSE_ADMIN PORT_ELEMENT_CALL PORT_LIVEKIT
     export PORT_MAS PORT_ELEMENT_WEB PORT_SLIDING_SYNC PORT_MEDIA_REPO PORT_ELEMENT_ADMIN
@@ -8910,14 +9393,16 @@ PROXY_IP="$AUTO_LOCAL_IP"
     
     # Clean up any orphaned containers first
     cd "$TARGET_DIR" && docker compose down --remove-orphans 2>/dev/null || true
+    log_ok "Old containers stopped and removed"
     
-    log_message "Running: docker compose up -d"
+    log_cmd "cd $TARGET_DIR && docker compose up -d"
     cd "$TARGET_DIR" && docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
-    log_message "docker compose up -d completed — waiting for PostgreSQL init"
+    log_ok "docker compose up -d returned — containers starting"
     
     # Brief pause for Docker networking and PostgreSQL init scripts
     # (PostgreSQL needs ~10-15s to create all 3 databases via init scripts)
     echo -e "   ${INFO}Waiting for PostgreSQL initialization...${RESET}"
+    log_message "Sleeping 15s for PostgreSQL init scripts (creates synapse, matrix_auth, syncv3 databases)"
     sleep 15
 
     ############################################################################
@@ -8937,6 +9422,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 60 ]]; then
+            log_error "FATAL: PostgreSQL / matrix_auth failed to initialise — deployment cannot continue"
             echo -e "\n${ERROR}[!] ERROR: PostgreSQL / matrix_auth database failed to initialise.${RESET}"
             echo -e "${INFO}Check logs: docker logs synapse-db${RESET}"
             docker logs --tail 30 synapse-db 2>&1 | sed 's/^/   /'
@@ -8944,7 +9430,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ PostgreSQL — ONLINE${RESET}"
-    log_message "PostgreSQL — ONLINE"
+    log_ok "PostgreSQL — ONLINE (after $((TRIES*2))s wait)"
     # Note: Databases are now created in PostgreSQL init script, so this loop is removed.
     # for bridge in "${SELECTED_BRIDGES[@]}"; do ... done  # removed
 
@@ -8956,6 +9442,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 90 ]]; then
+            log_error "FATAL: MAS (matrix-auth) failed health check — deployment cannot continue"
             echo -e "\n${ERROR}[!] ERROR: MAS failed to become healthy.${RESET}"
             echo -e "${ERROR}   This is often caused by an invalid signing key in mas/config.yaml.${RESET}"
             echo -e "${INFO}   Last 40 lines of MAS logs:${RESET}"
@@ -8964,7 +9451,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ MAS (Auth Service) — ONLINE${RESET}"
-    log_message "MAS (Auth Service) — ONLINE"
+    log_ok "MAS (Auth Service) — ONLINE (after $((TRIES*2))s wait)"
     echo -ne "\n${WARNING}>> Checking Synapse...${RESET}"
     TRIES=0
     until curl -sL --fail "http://$AUTO_LOCAL_IP:$PORT_SYNAPSE/_matrix/client/versions" 2>/dev/null | grep -q "versions"; do
@@ -8972,6 +9459,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         sleep 2
         ((TRIES++))
         if [[ $TRIES -gt 150 ]]; then
+            log_error "FATAL: Synapse failed to start — deployment cannot continue"
             echo -e "\n${ERROR}[!] ERROR: Synapse failed to start.${RESET}"
             echo -e "${INFO}   Last 40 lines of Synapse logs:${RESET}"
             docker logs --tail 40 synapse 2>&1 | sed 's/^/   /'
@@ -8979,7 +9467,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         fi
     done
     echo -e "\n${SUCCESS}✓ Synapse — ONLINE${RESET}"
-    log_message "Synapse — ONLINE"
+    log_ok "Synapse — ONLINE (after $((TRIES*2))s wait)"
 
     # ── LiveKit SFU (always required) ────────────────────────────────────────
     echo -ne "\n${WARNING}>> Checking LiveKit SFU...${RESET}"
@@ -8991,10 +9479,11 @@ PROXY_IP="$AUTO_LOCAL_IP"
         if [[ $TRIES -gt 30 ]]; then
             echo -e "\n${WARNING}⚠️  LiveKit may not be ready — check: docker logs livekit${RESET}"
             HEALTH_FAILED=true
+            log_warn "HEALTH CHECK FAILED: LiveKit did not come online"
             break
         fi
     done
-    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE${RESET}" && log_message "LiveKit SFU — ONLINE"
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ LiveKit SFU — ONLINE${RESET}" && log_ok "LiveKit SFU — ONLINE (after $((TRIES*2))s wait)"
 
     # ── LiveKit JWT Service (always required) ────────────────────────────────
     echo -ne "\n${WARNING}>> Checking LiveKit JWT Service...${RESET}"
@@ -9007,6 +9496,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
         if [[ $TRIES -gt 20 ]]; then
             echo -e "\n${WARNING}⚠️  LiveKit JWT may not be ready — check: docker logs livekit-jwt${RESET}"
             HEALTH_FAILED=true
+            log_warn "HEALTH CHECK FAILED: LiveKit JWT did not come online"
             break
         fi
     done
@@ -9022,10 +9512,11 @@ PROXY_IP="$AUTO_LOCAL_IP"
         if [[ $TRIES -gt 30 ]]; then
             echo -e "\n${WARNING}⚠️  Element Web may not be ready — check: docker logs element-web${RESET}"
             HEALTH_FAILED=true
+            log_warn "HEALTH CHECK FAILED: Element Web did not come online"
             break
         fi
     done
-    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Element Web — ONLINE${RESET}" && log_message "Element Web — ONLINE"
+    [[ $TRIES -lt 30 ]] && echo -e "\n${SUCCESS}✓ Element Web — ONLINE${RESET}" && log_ok "Element Web — ONLINE (after $((TRIES*2))s wait)"
     if [[ "$ELEMENT_CALL_ENABLED" == "true" ]]; then
         echo -ne "\n${WARNING}>> Checking Element Call...${RESET}"
         TRIES=0
@@ -9036,6 +9527,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             if [[ $TRIES -gt 30 ]]; then
                 echo -e "\n${WARNING}⚠️  Element Call may not be ready — check: docker logs element-call${RESET}"
                 HEALTH_FAILED=true
+                log_warn "HEALTH CHECK FAILED: Element Call did not come online"
                 break
             fi
         done
@@ -9053,6 +9545,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             if [[ $TRIES -gt 30 ]]; then
                 echo -e "\n${WARNING}⚠️  Sliding Sync may not be ready — check: docker logs sliding-sync${RESET}"
                 HEALTH_FAILED=true
+                log_warn "HEALTH CHECK FAILED: Sliding Sync did not come online"
                 break
             fi
         done
@@ -9072,6 +9565,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             if [[ $TRIES -gt 30 ]]; then
                 echo -e "\n${WARNING}⚠️  Matrix Media Repo may not be ready — check: docker logs matrix-media-repo${RESET}"
                 HEALTH_FAILED=true
+                log_warn "HEALTH CHECK FAILED: Matrix Media Repo did not come online"
                 break
             fi
         done
@@ -9091,6 +9585,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             if [[ $TRIES -gt 20 ]]; then
                 echo -e "\n${WARNING}⚠️  Element Admin may not be ready — check: docker logs element-admin${RESET}"
                 HEALTH_FAILED=true
+                log_warn "HEALTH CHECK FAILED: Element Admin did not come online"
                 break
             fi
         done
@@ -9107,6 +9602,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
             if [[ $TRIES -gt 20 ]]; then
                 echo -e "\n${WARNING}⚠️  Synapse Admin may not be ready — check: docker logs synapse-admin${RESET}"
                 HEALTH_FAILED=true
+                log_warn "HEALTH CHECK FAILED: Synapse Admin did not come online"
                 break
             fi
         done
@@ -9126,6 +9622,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
                 if [[ $TRIES -gt 20 ]]; then
                     echo -e " ${WARNING}⚠️  not running — check: docker logs matrix-bridge-$bridge${RESET}"
                     HEALTH_FAILED=true
+                    log_warn "HEALTH CHECK FAILED: unknown service did not come online"
                     break
                 fi
             done
@@ -9188,9 +9685,11 @@ PROXY_IP="$AUTO_LOCAL_IP"
     
     # Wait for Synapse to fully initialize MAS endpoints
     echo -e "${INFO}   Waiting for Synapse MAS integration to initialize...${RESET}"
+    log_message "Waiting 10s for Synapse MAS integration to initialize"
     sleep 10
     
     # Verify MAS endpoint is available in Synapse
+    log_cmd "curl http://localhost:8008/_synapse/mas/health (polling max 30s)"
     TRIES=0
     until docker exec synapse curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8008/_synapse/mas/health 2>/dev/null | grep -q '^2' || [ $TRIES -ge 6 ]; do
         echo -ne "."
@@ -9198,9 +9697,11 @@ PROXY_IP="$AUTO_LOCAL_IP"
         ((TRIES++))
     done
     echo ""
+    [[ $TRIES -lt 6 ]] && log_ok "MAS endpoint healthy in Synapse" || log_warn "MAS endpoint not confirmed healthy after 30s — proceeding anyway"
     
     # MAS CLI syntax: register-user [USERNAME] --password <pass> --admin
     echo -e "${INFO}   Registering admin user...${RESET}"
+    log_cmd "docker exec matrix-auth mas-cli manage register-user $ADMIN_USER --admin --yes"
     REGISTER_OUTPUT=$(docker exec matrix-auth mas-cli manage register-user "$ADMIN_USER" \
         --password "$ADMIN_PASS" \
         --admin \
@@ -9259,6 +9760,7 @@ PROXY_IP="$AUTO_LOCAL_IP"
     ############################################################################
 
     log_section "STEP 10: Proxy Configuration Guides"
+    log_message "Proxy type: $PROXY_TYPE | Already running: $PROXY_ALREADY_RUNNING"
     if [[ "$PROXY_TYPE" == "npm" ]]; then
         if [[ "$PROXY_ALREADY_RUNNING" == "false" ]]; then
             # Auto-installed: NPM is up but proxy hosts still need to be created manually
@@ -9332,24 +9834,20 @@ PROXY_IP="$AUTO_LOCAL_IP"
     ############################################################################
 
     log_section "STEP 11: Deployment Complete"
-    log_message "Matrix server: $SERVER_NAME | Admin user: @$ADMIN_USER:$SERVER_NAME"
-    log_message "Element Web: https://$SUB_ELEMENT.$DOMAIN"
-    log_message "MAS (Auth): https://$SUB_MAS.$DOMAIN"
-    log_message "Matrix API: https://$SUB_MATRIX.$DOMAIN"
-    [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]] && log_message "Element Admin: https://$SUB_ELEMENT_ADMIN.$DOMAIN"
-    [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]] && log_message "Synapse Admin: https://$SUB_SYNAPSE_ADMIN.$DOMAIN"
-    [[ "$ELEMENT_CALL_ENABLED" == "true" ]] && log_message "Element Call: https://$SUB_CALL.$DOMAIN"
-    [[ "$SLIDING_SYNC_ENABLED" == "true" ]] && log_message "Sliding Sync: https://$SUB_SLIDING_SYNC.$DOMAIN"
-    [[ "$MEDIA_REPO_ENABLED" == "true" ]] && log_message "Media Repo: https://$SUB_MEDIA_REPO.$DOMAIN"
-    log_message "Bridges installed: ${SELECTED_BRIDGES[*]:-none}"
-    log_message "Log rotation: $SETUP_LOG_ROTATION"
-    log_message "Deployment log written to: $LOG_FILE"
-    log_message "────────────────────────────────────────────────────────────────────"
-    log_message "Stack is up — awaiting user to configure reverse proxy and DNS before final restart"
-
-    # Stop tee redirect before interactive prompts — keeps log clean
-    exec 1>&-; exec 2>&-
-    exec 1>/dev/tty; exec 2>/dev/tty
+    log_message "Matrix server:   $SERVER_NAME"
+    log_message "Admin user:      @$ADMIN_USER:$SERVER_NAME"
+    log_message "Element Web:     https://$SUB_ELEMENT.$DOMAIN"
+    log_message "MAS (Auth):      https://$SUB_MAS.$DOMAIN"
+    log_message "Matrix API:      https://$SUB_MATRIX.$DOMAIN"
+    [[ "$ELEMENT_ADMIN_ENABLED" == "true" ]] && log_message "Element Admin:   https://$SUB_ELEMENT_ADMIN.$DOMAIN"
+    [[ "$SYNAPSE_ADMIN_ENABLED" == "true" ]] && log_message "Synapse Admin:   https://$SUB_SYNAPSE_ADMIN.$DOMAIN"
+    [[ "$ELEMENT_CALL_ENABLED"  == "true" ]] && log_message "Element Call:    https://$SUB_CALL.$DOMAIN"
+    [[ "$SLIDING_SYNC_ENABLED"  == "true" ]] && log_message "Sliding Sync:    https://$SUB_SLIDING_SYNC.$DOMAIN"
+    [[ "$MEDIA_REPO_ENABLED"    == "true" ]] && log_message "Media Repo:      https://$SUB_MEDIA_REPO.$DOMAIN"
+    log_message "Bridges:         ${SELECTED_BRIDGES[*]:-none}"
+    log_message "Log rotation:    $SETUP_LOG_ROTATION"
+    log_message "Log file:        $LOG_FILE"
+    log_message "Stack up — awaiting user to configure reverse proxy / DNS / port forwarding"
 
     draw_footer
 }
@@ -9616,7 +10114,7 @@ reconfigure_stack() {
         # Multiple stacks found - show whiptail checklist for selection
         if ! command -v whiptail &> /dev/null; then
             echo -e "${WARNING}Installing whiptail for selection menu...${RESET}"
-            apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+            install_whiptail
         fi
         
         # Build whiptail checklist
@@ -9730,11 +10228,24 @@ _validate_compose() {
 
 ################################################################################
 
+# Log script launch immediately — buffer will flush to real log once TARGET_DIR is known
+log_section "SCRIPT LAUNCH"
+log_message "Script started: $(date '+%Y-%m-%d %H:%M:%S')"
+log_message "Version: $SCRIPT_VERSION | PID: $$ | User: $(whoami) (uid=$(id -u))"
+log_message "Hostname: $(hostname) | Kernel: $(uname -r) | Arch: $(uname -m)"
+log_message "Shell: $BASH_VERSION"
+
+# Detect OS silently before anything — available to all menu options
+detect_os
+
 # Run update check before showing anything else
 check_for_updates
 
 # Pre-install menu
 draw_header
+
+# Show OS detection result (or prompt if unknown) after header, before menu
+show_os_result
 # Pre-install menu with loop for invalid selections
 while true; do
     echo -e "\n${ACCENT}>> What would you like to do?${RESET}\n"
@@ -9807,7 +10318,7 @@ while true; do
                 # Multiple stacks found - show whiptail checklist for selection
                 if ! command -v whiptail &> /dev/null; then
                     echo -e "${WARNING}Installing whiptail for selection menu...${RESET}"
-                    apt-get update -qq && apt-get install -y whiptail -qq > /dev/null 2>&1
+                    install_whiptail
                 fi
                 
                 echo -e "${INFO}Found ${#all_stacks[@]} installations. Select which to update:${RESET}\n"

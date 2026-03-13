@@ -2,6 +2,64 @@ Matrix Synapse Full Stack Deployer — Changelog
 by MadCat
 ================================================================================
 
+v1.9 (2026-03-14)
+─────────────────
+Multi-Distro Support:
+  - OS auto-detection from /etc/os-release with ID_LIKE fallback.
+  - Supports Debian/Ubuntu/DietPi (apt), Arch/Manjaro (pacman),
+    and Fedora/RHEL/Rocky (dnf).
+  - Unknown distro falls back to a 1/2/3 selection menu with a
+    clear warning that an incorrect choice may require a full redeploy.
+  - Detected distro displayed in color after the header — green
+    (Debian), purple (Arch), cyan (Fedora).
+  - Package manager abstracted throughout: PKG_MANAGER, PKG_INSTALL,
+    PKG_UPDATE, PKG_UPGRADE set once and used everywhere.
+  - Per-distro Docker install: get-docker.sh (Debian), pacman (Arch),
+    official DNF repo (Fedora); systemctl enable --now docker on
+    Arch/Fedora.
+  - Docker group setup prompt on Arch/Fedora after Docker install:
+    auto-add a user or display the manual command with press-to-continue.
+  - whiptail install abstracted: whiptail (Debian), libnewt (Arch),
+    newt (Fedora).
+  - Full distro-aware dependency list: iproute2/iproute (ip + ss),
+    bsdutils/util-linux (logger), cron/cronie, python3-yaml/python-yaml/
+    python3-pyyaml — all correct package names per distro.
+  - cronie enabled via systemctl on Arch/Fedora after install.
+  - Log rotation distro-aware: /etc/logrotate.conf only written on
+    Debian (Arch/Fedora manage it via package manager).
+  - logrotate binary resolved at runtime (differs between distros).
+  - detect_os() runs once at script startup — available to all menu
+    options, not just Install.
+
+Deployment Log:
+  - Verbose deployment log written to the stack directory on every
+    install: matrix-stack-deployment.log
+  - Covers the full run from script launch to final stack restart.
+  - Buffered from script start, flushed to file once deployment path
+    is confirmed.
+  - All steps logged with level tags: [INFO] [CMD] [OK] [WARN] [ERROR]
+    [STEP].
+  - ANSI color codes fully stripped — plain text, safe to share.
+  - Secrets and tokens redacted automatically: passwords, DB pass,
+    MAS secrets, LiveKit key/secret, NPM password, Pangolin secret.
+    Special characters in secrets (e.g. |) safely handled.
+  - Log never interrupts or alters script flow — all writes protected
+    with || true.
+  - Log rotation dry-run output trimmed to summary lines only.
+  - Visible LOG START and LOG END banners in the log file.
+  - Final stack restart output (docker compose down/up) captured and
+    logged with exit codes.
+
+Bug Fixes:
+  - Docker detection fixed: no longer prompts to install Docker/Dockge
+    when both are already present.
+  - COMPOSE_FILE variable now correctly set after config generation.
+  - daemon.json (Docker log limits) written before final stack restart
+    instead of mid-deployment — no more 3-minute Docker daemon hang.
+  - Available disk space logged correctly even before TARGET_DIR exists.
+
+================================================================================
+
 v1.8 (2026-03-09)
 ─────────────────
 Multi-Stack Support:
@@ -281,7 +339,7 @@ Output / UX:
   - "Included Components:" header in banner is now properly centered.
   - Removed duplicate "Generating $bridge config and registration..." line.
 
-v1.2 (2026-02-28)
+v1.2 (2026-03-01)
 ─────────────────
   - Fixed Discord bridge generator: commands now passed as args to ENTRYPOINT.
   - Fixed Discord bridge bot mismatch: sender_localpart patched in both

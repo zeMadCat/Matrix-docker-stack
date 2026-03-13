@@ -9,6 +9,19 @@
 > **Changelog**
 >
 > <details open>
+> <summary><strong>v1.9</strong> — 2026-03-14</summary>
+>
+> - **Multi-distro support** — Debian/Ubuntu/DietPi, Arch/Manjaro and Fedora/RHEL now all supported; OS auto-detected on launch, shown in color after the header
+> - **Distro-aware package manager** — `apt`, `pacman` or `dnf` used throughout; correct package names per distro for all dependencies
+> - **Distro-aware Docker install** — `get-docker.sh` (Debian), `pacman` (Arch), official DNF repo (Fedora); docker group prompt on Arch/Fedora
+> - **Unknown distro fallback** — 1/2/3 selection menu with a clear warning that an incorrect choice may require a full redeploy
+> - **Verbose deployment log** — full run logged to `matrix-stack-deployment.log` in the stack directory; all steps, commands, health check results and final restart captured; secrets redacted; ANSI color stripped; safe to share for troubleshooting
+> - **Docker detection fix** — no longer prompts to install Docker/Dockge when already present
+> - **daemon.json timing fix** — Docker log limits written before the final stack restart, not mid-deployment; no more multi-minute Docker daemon hang during log rotation setup
+>
+> </details>
+>
+> <details>
 > <summary><strong>v1.8</strong> — 2026-03-09</summary>
 >
 > - **Multi-stack support** — install multiple independent stacks on one server; each gets its own containers, network, and ports
@@ -123,8 +136,8 @@ Optional bridges selected during install:
 
 ## Requirements
 
-- A Linux server (tested on Ubuntu 22.04/24.04, Debian 12/13)
-- Docker + Docker Compose
+- A Linux server — tested on Debian 12/13, Ubuntu 22.04/24.04; Arch and Fedora supported (community-tested)
+- Docker + Docker Compose (installed automatically if missing)
 - A domain with DNS access
 - A reverse proxy (NPM, Caddy, Traefik, Cloudflare Tunnel, or Pangolin)
 - **⚠️ IMPORTANT — VPN Warning**: If using a VPN, proxy, or tunnel during setup:
@@ -153,9 +166,9 @@ Requires root or sudo. The script installs Docker if not present.
 
 ## What the setup looks like
 
-**Startup — update check before menu**
+**Startup — OS detection and update check before menu**
 
-The script checks GitHub for a newer version before showing the menu. If one is found, it asks whether to update and restart. Otherwise it proceeds directly to the menu.
+The script silently detects your OS on launch and displays it in color after the header (green for Debian/Ubuntu, purple for Arch, cyan for Fedora). If the distro cannot be detected automatically, a 1/2/3 selection menu is shown before the main menu. The script also checks GitHub for a newer version — if one is found it asks whether to update and restart.
 
 **Pre-install menu**
 
@@ -181,19 +194,23 @@ The script checks GitHub for a newer version before showing the menu. If one is 
 │                      │  • Multi-Stack Support                │
 │                      │                                       │
 ├──────────────────────────────────────────────────────────────┤
-│                    Script Version: v1.8                      │
+│                    Script Version: v1.9                      │
 └──────────────────────────────────────────────────────────────┘
+
+   ✓ Detected OS: Debian GNU/Linux 13 (trixie) [debian/apt]
 
  What would you like to do?
 
    1)  Install Matrix Stack
    2)  Update Matrix Stack
-   3)  Uninstall Matrix Stack
-   4)  Verify Installation
-   5)  Add Bridges
+   3)  Reconfigure Stack
+   4)  Uninstall Matrix Stack
+   5)  Verify Installation
    6)  View Logs
+   7)  Diagnostics
+   8)  Changelog
 
- Choice [1-6]:
+ Choice [0-8]:
 ```
 
 **Optional services & admin panel selection (before domain prompts)**
@@ -279,6 +296,30 @@ Choice [1-6]:
 
 ---
 
+## Deployment Log
+
+Every deployment writes a verbose log to `matrix-stack-deployment.log` in your stack directory. It covers the full run from script launch to final restart — all steps, commands, health check results, and timing. Secrets are automatically redacted and ANSI color codes stripped, making it safe to share publicly when asking for help.
+
+```
+════════════════════════════════════════════════════════════════════════════════
+═══════════════════════   MATRIX STACK DEPLOYMENT LOG   ═══════════════════════
+════════════════════════════════════════════════════════════════════════════════
+
+  Started:        2026-03-14 12:00:00
+  Script Version: 1.9
+  Hostname:       myserver
+
+[2026-03-14 12:00:00] [STEP ] >>> STEP 1: System Preparation
+[2026-03-14 12:00:01] [INFO ] OS: Debian GNU/Linux 13 [debian/apt]
+[2026-03-14 12:00:05] [OK   ] All dependencies already present
+[2026-03-14 12:00:05] [STEP ] >>> STEP 2: Docker Environment Audit
+[2026-03-14 12:00:05] [OK   ] Docker found: 29.3.0
+...
+[2026-03-14 12:04:43] [OK   ] Stack restarted successfully — deployment complete
+```
+
+---
+
 ## Bridges
 
 ### Why bridges need proper registration
@@ -335,7 +376,7 @@ Or visit `https://auth.yourdomain.com/register` directly.
 
 ## Uninstall
 
-Run the script again and select option 3. It detects all containers, volumes, networks and directories and removes them after confirmation.
+Run the script again and select option 4. It detects all containers, volumes, networks and directories and removes them after confirmation.
 
 > **Tip:** Keep the script outside the stack folder (`~/matrix-stack-deploy.sh`) — the uninstall option will warn you if it detects the script is inside the directory it is about to delete.
 
