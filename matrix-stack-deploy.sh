@@ -7765,6 +7765,20 @@ main_deployment() {
     if [ -n "$(docker ps -qf name=dockge 2>/dev/null)" ] || [ -d "/opt/stacks" ]; then
         echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${SUCCESS}Detected${RESET}"
         DOCKGE_FOUND=true
+    elif [ "$DOCKER_READY" = true ]; then
+        echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
+        ask_yn INST_DOCKGE "Install Dockge? (y/n): "
+        if [[ "$INST_DOCKGE" =~ ^[Yy]$ ]]; then
+            echo -e "\n${ACCENT}>> Installing Dockge...${RESET}"
+            mkdir -p /opt/dockge /opt/stacks
+            curl -fsSL https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output /opt/dockge/compose.yaml
+            cd /opt/dockge && docker compose up -d </dev/tty >/dev/tty 2>/dev/tty
+            cd - > /dev/null
+            echo -e "\n${SUCCESS}\u2713 Dockge installed and running.${RESET}"
+            DOCKGE_FOUND=true
+        else
+            echo -e "\n${WARNING}Dockge skipped.${RESET}"
+        fi
     else
         echo -e "   • ${DOCKER_COLOR}Dockge:${RESET}          ${INFO}Not Detected${RESET} ${WARNING}(Recommended)${RESET}"
         ask_yn INST_DOCKGE "Install Dockge (includes Docker & Compose)? (y/n): "
