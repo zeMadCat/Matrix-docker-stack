@@ -1,364 +1,137 @@
-Matrix Synapse Full Stack Deployer — Changelog
-by MadCat
-================================================================================
+v2.0 — 2026-04-09
+────────────────────────────────────────────────────────────────
 
-v1.9 (2026-03-14)
-─────────────────
-Multi-Distro Support:
-  - OS auto-detection from /etc/os-release with ID_LIKE fallback.
-  - Supports Debian/Ubuntu/DietPi (apt), Arch/Manjaro (pacman),
-    and Fedora/RHEL/Rocky (dnf).
-  - Unknown distro falls back to a 1/2/3 selection menu with a
-    clear warning that an incorrect choice may require a full redeploy.
-  - Detected distro displayed in color after the header — green
-    (Debian), purple (Arch), cyan (Fedora).
-  - Package manager abstracted throughout: PKG_MANAGER, PKG_INSTALL,
-    PKG_UPDATE, PKG_UPGRADE set once and used everywhere.
-  - Per-distro Docker install: get-docker.sh (Debian), pacman (Arch),
-    official DNF repo (Fedora); systemctl enable --now docker on
-    Arch/Fedora.
-  - Docker group setup prompt on Arch/Fedora after Docker install:
-    auto-add a user or display the manual command with press-to-continue.
-  - whiptail install abstracted: whiptail (Debian), libnewt (Arch),
-    newt (Fedora).
-  - Full distro-aware dependency list: iproute2/iproute (ip + ss),
-    bsdutils/util-linux (logger), cron/cronie, python3-yaml/python-yaml/
-    python3-pyyaml — all correct package names per distro.
-  - cronie enabled via systemctl on Arch/Fedora after install.
-  - Log rotation distro-aware: /etc/logrotate.conf only written on
-    Debian (Arch/Fedora manage it via package manager).
-  - logrotate binary resolved at runtime (differs between distros).
-  - detect_os() runs once at script startup — available to all menu
-    options, not just Install.
+NEW — Hookshot bridge
+  Webhooks, GitHub, GitLab, RSS/Atom feeds, Figma, JIRA.
+  No external database — uses Matrix state as store.
+  Generates passkey.pem (RSA 4096), writes config.yml and
+  registration.yml from scratch. Proxy guide shown post-install
+  for Caddy, NPM, and Traefik.
+  Bot: @hookshot:domain — !hookshot webhook / !hookshot feed
 
-Deployment Log:
-  - Verbose deployment log written to the stack directory on every
-    install: matrix-stack-deployment.log
-  - Covers the full run from script launch to final stack restart.
-  - Buffered from script start, flushed to file once deployment path
-    is confirmed.
-  - All steps logged with level tags: [INFO] [CMD] [OK] [WARN] [ERROR]
-    [STEP].
-  - ANSI color codes fully stripped — plain text, safe to share.
-  - Secrets and tokens redacted automatically: passwords, DB pass,
-    MAS secrets, LiveKit key/secret, NPM password, Pangolin secret.
-    Special characters in secrets (e.g. |) safely handled.
-  - Log never interrupts or alters script flow — all writes protected
-    with || true.
-  - Log rotation dry-run output trimmed to summary lines only.
-  - Visible LOG START and LOG END banners in the log file.
-  - Final stack restart output (docker compose down/up) captured and
-    logged with exit codes.
+NEW — Repair wizard (menu option 9)
+  Detects installed stack, shows live container status and
+  well-known health, guided repair for:
+    Synapse / MAS / PostgreSQL not running
+    Well-known broken or wrong HTTP code
+    Calls not working (LiveKit / TURN / firewall)
+    Reverse proxy not routing (Caddy / NPM / Traefik)
+    Admin panel 404 / not reachable
+    Element Web loading wrong homeserver
+    Bridge not connecting / bot unresponsive
+    Restart all containers
+  Post-repair status check runs automatically.
 
-Bug Fixes:
-  - Docker detection fixed: no longer prompts to install Docker/Dockge
-    when both are already present.
-  - COMPOSE_FILE variable now correctly set after config generation.
-  - daemon.json (Docker log limits) written before final stack restart
-    instead of mid-deployment — no more 3-minute Docker daemon hang.
-  - Available disk space logged correctly even before TARGET_DIR exists.
+NEW — Migrate Well-Known (reconfigure option 6)
+  Auto or guided mode to switch how well-known is served.
+  Auto mode: rewrites Caddyfile + reloads, generates
+  npm-wellknown.conf, or writes static files.
+  Three directions: inline respond → files, files → inline,
+  or refresh/repair both.
 
-================================================================================
+NEW — NPM auto proxy-host creation
+  After install, all proxy hosts created via NPM REST API.
+  SSL method prompt (Let's Encrypt or HTTP-only).
+  Well-known location blocks injected into base domain host.
+  Wait loop polls port 80 (reliable signal NPM nginx is up).
+  Falls back gracefully to manual guide if auth fails.
 
-v1.8 (2026-03-09)
-─────────────────
-Multi-Stack Support:
-  - Multiple independent stacks can now be installed on the same server, each
-    with its own containers, Docker network, ports, and data directory.
-  - Container name conflict detection: port offset and name offset are now
-    scanned independently; the higher of the two drives the suffix (-2, -3, …).
-  - Full container name list checked for conflicts: synapse, synapse-db,
-    matrix-auth, element-web, livekit, livekit-jwt, element-call, element-admin,
-    synapse-admin, sliding-sync, matrix-media-repo, coturn, proxy containers.
-  - Docker network name conflict detection: matrix-net suffix increments if
-    matrix-net already exists; name: field in compose correctly suffixed so
-    Docker does not prepend the project directory name.
-  - Bridge container names suffixed consistently (matrix-bridge-discord-2, etc.).
-  - All container_name: fields in optional feature snippets (_feat_add) now
-    receive the correct suffix when added to a non-primary stack.
+FIX — NPM port conflict detection
+  Identifies what is holding ports 80/443 (old NPM, Caddy,
+  Traefik, or other). If old NPM detected, offers to stop it
+  and reuse standard ports — no more forced fallback to 8000/8443.
 
-Reconfigure Menu:
-  - New reconfigure option in the main menu: modify domain, features, and
-    bridges on any installed stack without reinstalling.
-  - Multi-stack: whiptail checklist lets you select which stack(s) to reconfigure.
-  - Domain management: change base domain and all subdomains; optional subdomains
-    only shown if that service is installed.
-  - Feature management: whiptail checklist pre-selects currently installed
-    optional features; add or remove individually.
-  - Feature parsing fix: whiptail multi-word item output now correctly parsed
-    via eval array (was word-splitting "Element Admin" into two tokens).
-  - Bridge management: same whiptail flow as install-time bridge selection;
-    pre-selects installed bridges.
+FIX — Uninstall now actually removes containers
+  _delete_single_stack rewritten: docker compose down as primary,
+  then scans by compose project label + all known container names.
+  NPM (jc21/nginx-proxy-manager) and Hookshot added to orphan
+  scanner image pattern.
 
-Corrupt compose.yaml Auto-Repair:
-  - When re-adding a bridge that already exists in compose.yaml but the file
-    is corrupt (duplicate container_name keys), the script now detects the
-    corruption, removes the malformed service block with _compose_remove_svc,
-    and re-inserts a clean block instead of skipping silently.
-  - Applies to both manage_bridges (reconfigure path) and run_add_bridges
-    (install-time add bridges path).
+FIX — Orphan cleanup on no-stack-dir uninstall
+  When find_all_matrix_stacks returns nothing, falls through to
+  scan_and_remove_matrix_resources instead of silently returning.
 
-Verify Multi-Stack:
-  - run_verify() now auto-discovers all installed stacks.
-  - Single stack: proceeds directly. Multiple stacks: whiptail checklist to
-    select which to verify; runs checks sequentially with stack name header.
-  - Single "Press Enter" prompt at the end regardless of how many stacks verified.
+FIX — Telegram bridge (Python, not Go)
+  dock.mau.dev/mautrix/telegram:latest is still the Python bridge.
+  Go rewrite (mautrix/telegramgo) is a separate repo, not yet
+  stable. All Python-specific handling restored: config at
+  /opt/mautrix-telegram/, nested api_id/hash patching, Python
+  module registration generation.
 
-Cleanup Whiptail:
-  - Cleanup dialog now shows one entry per stack directory instead of listing
-    every individual container, network, volume, and port separately.
-  - Selecting a stack automatically includes all associated resources for removal.
-  - Container ownership determined by Docker mount path inspection.
+FIX — MAS config.yaml directory guard
+  Removes config.yaml if it was created as a directory by a
+  previous failed install. Also guards compose.yaml, homeserver.yaml,
+  livekit.yaml.
 
-Other Fixes:
-  - Element Call: resolved MISSING_MATRIX_RTC_FOCUS and MISSING_MATRIX_RTC_TRANSPORT
-    errors by correcting Element Call config and reverse proxy settings.
-  - CREATE DATABASE psql output suppressed (stdout was leaking to terminal).
-  - Domain input prompts: label text now prints in normal color; only the
-    typed input portion is highlighted yellow.
-  - All whiptail menus use consistent color scheme (green checkboxes, white/black).
+FIX — Compose output suppressed
+  docker compose up/down no longer prints TUI to terminal.
+  Output goes to the deployment log file instead.
 
-================================================================================
+FIX — Caddy well-known backtick syntax (issue #12)
+  respond blocks use backtick syntax. Single quotes caused
+  Caddy to return literal ' characters instead of JSON.
 
-v1.7 (2026-03-08)
-─────────────────
-  - JSON + YAML config validation: validate_yaml() renamed to validate_config(),
-    auto-detects file extension (.yaml/.yml → yaml.safe_load(), .json → python3 -m json.tool).
-  - Bridge error messages show actual log file path with last 5 lines of output.
-  - Port conflict detection and auto-fallback for NPM: find_available_port() and
-    check_port_conflicts() functions added; if ports 80/443 in use, fallback to 8000/8443.
-  - Enhanced Docker restart logic: checks systemd availability and Docker daemon status.
-  - Diagnostics integration: new run_diagnostics() function (menu option 7);
-    collects Docker versions, container lists, last 20 lines of logs, config snippets,
-    network details; saves to timestamped file with chmod 600; auto-detects Matrix
-    installation path from TARGET_DIR, container, or common paths.
-  - Bridge container deduplication in resource scanner: bridge containers filtered
-    from main table; bridge directory listing kept at bottom under directory entry.
-  - Well-Known setup message for NPM: clarifies that NPM handles well-known endpoint.
-  - Matrix Media Repo healthcheck fixed: changed from localhost:8013 to $AUTO_LOCAL_IP:8013;
-    added Docker fallback check (docker ps | grep -q "^matrix-media-repo$").
-  - Bridge cleanup output: shows ✕ discord (bridge), ✕ meta (bridge), etc. during uninstall.
-  - System-wide resource detection: STACK_PATHS expanded from 2 to 4+ paths
-    (/opt/stacks/matrix-stack, /opt/matrix-stack, $HOME/matrix-stack, $(pwd)/matrix-stack);
-    auto-detects paths from running Docker container volume mounts.
-  - Selective installation cleanup menu: whiptail checklist dialog for multiple installs
-    (SPACE to toggle, ENTER to confirm); falls back to text menu if whiptail unavailable;
-    subdirectories filtered out (only root stack directories shown).
-  - Container-to-stack mapping: CONTAINER_TO_STACK tracks which containers belong to which
-    installation; volumes only deleted if used by containers being removed; networks protected
-    unless all stacks removed; proper isolation per installation.
-  - Sed delimiter fix: changed NPM port mapping sed from /^networks:/ to \|^networks:|
-    to avoid "unterminated address regex" error with dynamic port variables.
-  - NPM healthcheck fix: changed from localhost:81 to $AUTO_LOCAL_IP:81; added Docker
-    fallback check (docker ps | grep -q "^nginx-proxy-manager$").
+FIX — Diagnostics hang
+  docker stats: timeout 15s. docker logs per container: timeout 8s.
 
-================================================================================
+FIX — VPN guide opt-in
+  Long VPN guide shown only if user requests it.
 
-v1.6 (2026-03-03)
-─────────────────
-  - Added msc4186_enabled: true to homeserver.yaml — enables native Simplified Sliding Sync for Element X.
-  - Caddy/Traefik guided setup: paginated step-by-step guides added for existing proxy installs.
-  - Caddy auto-install fix: removed premature reload from caddy_autosetup() — config applies on first start.
-  - Arch Linux fix: local IP detection now uses ip route with fallbacks; mkdir -p /etc/docker added before daemon.json write.
-  - LiveKit JWT port changed from 8080 to 8089 to avoid conflict with Traefik dashboard.
-  - Removed "not Element X" note — both Element and Element X are supported.
+FIX — Cleanup uses y/n, uninstall uses TYPE DELETE
+  scan_and_remove confirmation changed to y/n.
+  Uninstall proper still requires typing DELETE.
 
-================================================================================
+FIX — System package upgrade prompt (all distros)
+  ask_yn before upgrading. Default yes.
 
-v1.5 (2026-03-03)
-─────────────────
-Pangolin Reverse Proxy Support:
-  - Added Pangolin as proxy option 5 (Manual moved to 6).
-  - Collects Pangolin dashboard URL, Newt Tunnel ID, Newt Secret, VPS public IP.
-  - Adds newt container (fosrl/newt:latest) to compose.yaml with tunnel credentials.
-  - LiveKit TURN points to VPS IP instead of turn.$DOMAIN when Pangolin selected.
-  - show_pangolin_guide() function: 3-step guide with tunnel config table,
-    coturn VPS compose.yaml (reuses LiveKit secret), DNS records table.
-  - DNS status table: services show "PANGOLIN", TURN shows "VPS IP".
-  - Port forwarding table replaced with "no open ports required" message.
-  - Footer, credentials file, and well-known hints updated for Pangolin.
-  - nginx well-known setup skipped for Pangolin (not needed).
+FIX — DuckDNS token visible input
+  Shows masked confirmation: first4****last4 (N chars).
 
-Network Detection Revamp:
-  - Full re-detect loop: saying n now offers manual entry with detected IPs
-    shown as defaults in brackets.
-  - Typing back or b in manual entry returns to the detection screen.
-  - Validates both IPs are filled before continuing; loops back with error
-    if either is empty.
-  - Simplified to y/n only (no cancel option).
+FIX — S3 warning updated
+  Explicitly lists Google Drive, Dropbox, OneDrive, NFS, SMB
+  as not S3-compatible.
 
-Storage Check (before deployment path selection):
-  - Added get_free_gb(), get_total_gb(), get_used_pct() helper functions.
-  - Shows estimated storage needed (~5GB base, ~7GB with bridges).
-  - Displays root filesystem: Total / Free / Used%.
-  - Warns if free space is below the estimated requirement.
-  - Deployment path options show free GB inline per option.
-  - Custom path entry shows free space at the entered location.
-  - _path_free_gb() helper walks upward to nearest existing parent dir.
+FIX — NPM/NPMPlus label conditional
+  NPMPlus shown only when user selects existing proxy.
 
-NPM Base Domain Config Updated:
-  - Well-known now served inline via NPM location blocks (no nginx dependency,
-    no Synapse serve_server_wellknown required, no Cloudflare stripping issues).
-  - Added /_matrix/client/ block with proxy_hide_header + CORS re-add
-    (required for auth_metadata and OIDC discovery by Element Admin).
-  - Added /_synapse/ess/ block (required for Element Admin version check).
-  - Root location / now redirects to Element Web.
-  - Removed CORS strip headers from base domain (only belong on matrix subdomain).
-  - Added NOTE about Origin server certificate requirement for base domain.
+FIX — Port conflict message generic
+  Names actual detected service, not hardcoded Caddy/Traefik.
 
-MAS Config Fix:
-  - homeserver: was incorrectly set to "$DOMAIN" instead of "$SERVER_NAME".
-    This broke Element Admin auth when the Matrix server name differs from
-    the base domain (e.g. matrix.example.com vs example.com).
+────────────────────────────────────────────────────────────────
 
-Matrix Homeserver NPM Config Fix:
-  - Added missing /_synapse/admin/ location block (required for Element Admin
-    dashboard — rooms, users, server info).
+v1.9 — 2026-03-14
+  Multi-distro: Debian/Ubuntu/DietPi, Arch, Fedora/RHEL.
+  OS auto-detected, distro-aware package manager and Docker
+  install. Verbose deployment log. Daemon.json timing fix.
 
-Version Detection Logic:
-  - compare_versions() and API result stripping now handle both v and V tag
-    prefixes (sed 's/^[Vv]//' and ${1#[Vv]}).
-  - GitHub API result validated before use; falls back to version.txt if
-    API returns invalid or empty response.
-  - Fallback extracts highest version number from version.txt via sort -V.
-  - Shows "Local: vX.X | Remote: vX.X" comparison line before result.
-  - Unverified version warning redesigned with centered colored text.
+v1.8 — 2026-03-09
+  Multi-stack support. Container/network conflict detection.
+  Reconfigure menu. Verify multi-stack. Corrupt compose.yaml
+  auto-repair. Cleanup per-stack whiptail. Element Call fix.
 
-Cosmetic Improvements:
-  - Banner redesigned: two-column layout (CORE / BRIDGES + FEATURES),
-    version number shown inside the banner box.
-  - Script comment block expanded with Optional Components, Bridges,
-    and Features sections.
+v1.7 — 2026-03-08
+  Bridge error messages. NPM port fallback. Diagnostics menu.
+  Bridge container deduplication. System-wide resource detection.
+  Selective cleanup menu. NPM healthcheck fix.
 
-================================================================================
+v1.6 — 2026-03-03
+  Element X support. Caddy/Traefik guides. Caddy premature
+  reload fix. Arch Linux fixes. LiveKit JWT port 8089.
 
-v1.4 (2026-03-02)
-─────────────────
-Storage Check:
-  - Added disk space check before deployment path selection.
-  - Shows estimated storage needs and free space per path option.
-  - Warns if available space is below estimated requirement.
+v1.5 — 2026-03-03
+  Pangolin support. Storage check. Network detection revamp.
+  NPM inline well-known. MAS server_name fix.
 
-Version Check Improvements:
-  - Improved GitHub API version parsing.
-  - Better fallback handling when releases API is unavailable.
+v1.4 — 2026-03-02
+  Storage check. Version check improvements.
 
-================================================================================
+v1.3 — 2026-03-01
+  MAS signing key fixed. All bridges fixed. Add Bridges
+  universal. User registration form restored.
 
+v1.2 — 2026-03-01
+  Admin panel choice. LiveKit TURN/STUN. Health checks
+  conditional. Input validation. Bridge registration fixed.
 
-v1.3 (2026-03-01)
-─────────────────
-MAS (Matrix Authentication Service):
-  - Fixed signing key: MAS requires both RSA (RS256) and EC (P-256) keys.
-    Previously only an EC key was generated, causing token signing failures.
-  - Keys are now generated as bash variables and injected inline into
-    config.yaml via awk — no signing_key.pem file is written to disk.
-  - Removed key_file volume mount from compose.yaml (was never supported
-    reliably; inline key: | block is the correct approach).
-  - Renamed compose service from "mas" to "matrix-auth" for consistency
-    with the container_name.
-  - Fixed Synapse endpoint reference: http://matrix-auth:8080/ (was mas:8080).
-
-Discord Bridge (mautrix-discord):
-  - Fixed: appservice.database was not configured — URI now correctly patched
-    into config.yaml with format postgresql://user:pass@postgres/db.
-  - Fixed: added ?sslmode=disable to bridge DB URI (postgres container has
-    SSL disabled by default).
-  - Fixed: appservice listen address changed from localhost to mautrix-discord
-    (container name) so Synapse can reach the bridge over Docker network.
-  - Fixed: registration.yaml url also updated to use container name.
-  - Fixed: permissions block now patched with real domain and admin user
-    instead of example.com placeholders.
-  - Bridge database (mautrix_discord) is now created automatically during
-    deployment.
-
-Cleanup / Uninstall:
-  - Cleanup now detects containers from other Matrix/Element compose projects
-    by project label (e.g. element-docker-demo, matrix-demo) in addition to
-    known Matrix images — catches postgres, redis, mailhog etc. from demo stacks.
-  - Foreign compose projects are brought down cleanly via docker compose down
-    before individual container removal, ensuring networks/volumes are cleaned.
-
-Add Bridges (option 5) — Universal compatibility:
-  - Now auto-detects DB credentials (user + password) from existing
-    homeserver.yaml — no longer relies on variables from the current session,
-    which would be empty on a foreign deployment.
-  - Auto-detects postgres container name by scanning running containers for
-    known patterns (synapse-db, postgres, matrix-db, etc.).
-  - Auto-detects synapse container name and Docker network by inspecting the
-    running synapse container — bridge compose services now join the correct
-    network automatically.
-  - Falls back to interactive prompts if auto-detection fails.
-  - All bridge config patches (DB URI, synapse address, permissions) now use
-    the detected container names instead of hardcoded values.
-  - Works on any Docker-based Matrix deployment, not just installs from this
-    script.
-
-All Bridges (Discord, Telegram, WhatsApp, Signal, Slack, Instagram):
-  - Fixed: DB URI was never patched — bridge crashed with
-    "appservice.database not configured" on every startup.
-  - Fixed: added ?sslmode=disable to DB URI — postgres container has SSL
-    disabled; without this the bridge panics with "SSL is not enabled".
-  - Fixed: appservice listen address changed from http://localhost:<port> to
-    http://mautrix-<bridge>:<port> — Synapse could not reach the bridge over
-    the Docker network with localhost, causing M_CONNECTION_FAILED ping loop.
-  - Fixed: registration.yaml url also updated to use container name.
-  - Fixed: permissions block now patched with real domain and admin user
-    instead of example.com placeholders — bridge crashed with
-    "bridge.permissions not configured".
-  - Bridge database (mautrix_<bridge>) is now created automatically.
-
-User Registration:
-  - Fixed: password_registration_enabled missing from MAS account config.
-    Despite policy.registration.enabled: true, the registration form was not
-    shown on auth.domain/register or auth.domain/account — the page showed
-    "Create an account" as text only with no input fields.
-    Root cause: MAS requires account.password_registration_enabled: true
-    separately from the policy block. Now set to match the registration choice
-    made during install.
-
-LiveKit JWT Service:
-  - Fixed: LIVEKIT_HOST renamed to LIVEKIT_URL — the lk-jwt-service image
-    changed the expected variable name; old name caused a restart loop with
-    "LIVEKIT_KEY[_FILE], LIVEKIT_SECRET[_FILE] and LIVEKIT_URL environment
-    variables must be set" on every startup despite vars being present.
-  - Fixed: LIVEKIT_JWT_PORT=8080 renamed to LIVEKIT_JWT_BIND=:8080 — old
-    variable is deprecated in current image and produced a warning in logs.
-
-Output / UX:
-  - register-user CLI examples now show USERNAME and PASSWORD placeholders
-    and include --yes flag to avoid interactive prompt errors.
-  - Custom server name option: warns if entered name contains no dot (not a
-    valid domain — MAS and federation require a real domain).
-  - Bridge registration output simplified: "✓ discord registered with Synapse"
-    instead of showing sender_localpart details.
-  - Appservice registration message lists bridge names with bullets in blue.
-  - Removed "(allow 30-60s to connect)" from bridge check message.
-  - Saved credentials file now matches on-screen output format exactly,
-    with a different footer warning for the file version.
-  - "Included Components:" header in banner is now properly centered.
-  - Removed duplicate "Generating $bridge config and registration..." line.
-
-v1.2 (2026-03-01)
-─────────────────
-  - Fixed Discord bridge generator: commands now passed as args to ENTRYPOINT.
-  - Fixed Discord bridge bot mismatch: sender_localpart patched in both
-    config.yaml and registration.yaml.
-  - Fixed MAS signing key permission denied: chmod 644 applied correctly.
-  - Fixed Element Admin healthcheck: replaced curl -f with HTTP status check
-    to handle 3xx redirects from nginx.
-  - Fixed LiveKit JWT service configuration.
-  - Added MSC3886 configuration for video calling.
-  - Added LiveKit multi-screenshare support (no artificial limits).
-  - Improved Docker Compose healthcheck reliability across all services.
-
-v1.1 (2026-02-20)
-─────────────────
-  - Initial public release.
-  - Full Matrix stack: Synapse, MAS, PostgreSQL, LiveKit, LiveKit JWT,
-    Sliding Sync, Element Web, Element Admin, Synapse Admin.
-  - Bridge support: Discord, Telegram, WhatsApp, Signal, Slack, Instagram.
-  - Proxy support: Nginx Proxy Manager, Traefik, Caddy.
-  - Automated admin user creation via MAS CLI.
-  - Well-known configuration via nginx.
-  - DNS and port forwarding guidance in deployment summary.
+v1.1 — Element Admin, bridge improvements, MAS OIDC, auto-config.
+v1.0 — First public release.
