@@ -1,6 +1,5 @@
 <div align="center">
   <img src="images/mds.png" alt="Matrix Docker Stack" style="width: min(450px, 100%)"/>
-  <p><em>Vibecoded — built for personal use, shared because it works.</em></p>
   <p>A single interactive bash script that deploys a full Matrix homeserver stack on any Linux machine with Docker.</p>
 </div>
 
@@ -18,7 +17,7 @@
 > - **NPM port conflict** — detects what holds ports 80/443 (old NPM, Caddy, Traefik); offers to stop old NPM and reuse standard ports instead of forcing 8000/8443 fallback
 > - **Uninstall fix** — `_delete_single_stack` rewritten: `docker compose down` as primary, then scans by compose project label + all known container names; NPM and Hookshot added to orphan scanner
 > - **Orphan cleanup** — uninstall with no stack dir falls through to container scan instead of silently returning
-> - **Telegram bridge** — restored to Python handling; `dock.mau.dev/mautrix/telegram:latest` is still the Python bridge (Go rewrite in separate repo, not yet stable); config path, api_id/hash patching, registration generation all corrected
+> - **Telegram bridge** — migrated to Go rewrite; `dock.mau.dev/mautrix/telegram:latest` (main branch) is now the Go bridge; uses `/pkg/connector/example-config.yaml`, top-level `api_id`/`api_hash`, standard Go entrypoint like all other bridges
 > - **MAS config guard** — removes config.yaml if it was created as a directory by a previous failed install; same guard for compose.yaml, homeserver.yaml, livekit.yaml
 > - **Compose output suppressed** — `docker compose up/down` no longer prints TUI to terminal; goes to deployment log instead
 > - **Caddy well-known fix** — `respond` blocks use backtick syntax; single quotes caused Caddy to return literal `'` instead of JSON (issue #12)
@@ -109,7 +108,7 @@
 
 A fully interactive TUI deployment script for a self-hosted Matrix stack. Originally written for my own domain but designed to work with any domain through a dynamic setup wizard. You answer prompts, the script builds everything.
 
-This is not a polished enterprise tool. It's a personal homelab project that grew into something reusable. Use it at your own risk, and feel free to adapt it.
+Use it at your own risk, and feel free to adapt it.
 
 ---
 

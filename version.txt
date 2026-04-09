@@ -51,12 +51,12 @@ FIX — Orphan cleanup on no-stack-dir uninstall
   When find_all_matrix_stacks returns nothing, falls through to
   scan_and_remove_matrix_resources instead of silently returning.
 
-FIX — Telegram bridge (Python, not Go)
-  dock.mau.dev/mautrix/telegram:latest is still the Python bridge.
-  Go rewrite (mautrix/telegramgo) is a separate repo, not yet
-  stable. All Python-specific handling restored: config at
-  /opt/mautrix-telegram/, nested api_id/hash patching, Python
-  module registration generation.
+FIX/UPGRADE — Telegram bridge (now Go)
+  dock.mau.dev/mautrix/telegram:latest main branch is now the Go
+  rewrite. Treated identically to all other Go bridges: binary
+  search via command -v, config at /pkg/connector/example-config.yaml,
+  top-level api_id/api_hash keys, standard --entrypoint -g
+  registration generation.
 
 FIX — MAS config.yaml directory guard
   Removes config.yaml if it was created as a directory by a

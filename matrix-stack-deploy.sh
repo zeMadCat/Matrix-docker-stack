@@ -801,7 +801,7 @@ draw_footer() {
                     echo -e "   ${INFO}Step 2:${RESET}    Enter your phone number when prompted"
                     echo -e "   ${INFO}Step 3:${RESET}    Enter the code Telegram sends you"
                     echo -e "   ${INFO}2FA:${RESET}       Enter your Telegram password if 2FA is enabled"
-                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/python/telegram/authentication.html"
+                    echo -e "   ${INFO}Docs:${RESET}      https://docs.mau.fi/bridges/go/telegram/authentication.html"
                     echo -e ""
                     ;;
                 whatsapp)
@@ -1985,7 +1985,7 @@ HSREG
                 local BINARY_NAME="mautrix-$bridge"
                 local IMAGE=""
 
-                # --- Step 0: Identify Image and entrypoint approach ---
+                # --- Step 0: Identify Image ---
                 IMAGE="dock.mau.dev/mautrix/$bridge:latest"
                 if [ "$bridge" = "meta" ]; then
                     BINARY_NAME="mautrix-meta"
@@ -1994,19 +1994,15 @@ HSREG
                 echo -e "\n   ${ACCENT}Configuring $bridge bridge...${RESET}"
 
                 # --- Step 1: Find the binary inside the image ---
-                # Telegram is still Python-based (Go rewrite not yet stable) — skip binary search
+                # All bridges including telegram are Go-based
                 local ENTRYPOINT=""
-                if [ "$bridge" = "telegram" ]; then
-                    # Python bridge — invoked as python3 -m mautrix_telegram
-                    # Set a sentinel so the skip guard passes; generation handled separately in Step 4
-                    ENTRYPOINT="python3 -m mautrix_telegram"
-                elif [ "$bridge" = "meta" ]; then
+                if [ "$bridge" = "meta" ]; then
                     ENTRYPOINT=$(docker run --rm --entrypoint sh "$IMAGE" -c "command -v mautrix-meta-messenger 2>/dev/null || command -v mautrix-meta-instagram 2>/dev/null || command -v mautrix-meta 2>/dev/null")
                 else
                     ENTRYPOINT=$(docker run --rm --entrypoint sh "$IMAGE" -c "command -v $BINARY_NAME 2>/dev/null")
                 fi
 
-                if [ -z "$ENTRYPOINT" ] && [ "$bridge" != "telegram" ]; then
+                if [ -z "$ENTRYPOINT" ]; then
                     # Common paths for Go-based bridges
                     for loc in "/usr/bin/$BINARY_NAME" "/usr/local/bin/$BINARY_NAME" "/app/$BINARY_NAME" "/opt/mautrix-$bridge/$BINARY_NAME"; do
                         if docker run --rm --entrypoint sh "$IMAGE" -c "test -f $loc" 2>/dev/null; then
@@ -2016,7 +2012,7 @@ HSREG
                     done
                 fi
 
-                if [ -z "$ENTRYPOINT" ] && [ "$bridge" != "telegram" ]; then
+                if [ -z "$ENTRYPOINT" ]; then
                     # Last resort full search
                     ENTRYPOINT=$(docker run --rm --entrypoint sh "$IMAGE" -c "find / -type f -name '$BINARY_NAME' 2>/dev/null | head -1")
                 fi
@@ -2030,20 +2026,8 @@ HSREG
                 local CONFIG_FILE="$TARGET_DIR/bridges/$bridge/config.yaml"
                 local GOT_CONFIG=false
 
-                # Telegram Python: config lives at /opt/mautrix-telegram/example-config.yaml
-                if [ "$bridge" = "telegram" ]; then
-                    if docker run --rm --entrypoint sh "$IMAGE" -c "test -f /opt/mautrix-telegram/example-config.yaml" 2>/dev/null; then
-                        docker run --rm \
-                            --entrypoint /bin/sh \
-                            -v "$TARGET_DIR/bridges/$bridge:/data" \
-                            "$IMAGE" \
-                            -c "cp /opt/mautrix-telegram/example-config.yaml /data/config.yaml" \
-                            > "$GEN_LOG" 2>&1 && GOT_CONFIG=true
-                    fi
-                fi
-
-                if [ "$GOT_CONFIG" = false ] && [ "$bridge" != "telegram" ]; then
-                    # Go bridges: check standard paths
+                if [ "$GOT_CONFIG" = false ]; then
+                    # All bridges are Go-based — check standard paths
                     local EXAMPLE_PATHS=("/pkg/connector/example-config.yaml" "/opt/mautrix-$bridge/example-config.yaml" "/app/example-config.yaml")
 
                     for ex_path in "${EXAMPLE_PATHS[@]}"; do
@@ -2065,7 +2049,7 @@ HSREG
                     local GITHUB_URL=""
                     case $bridge in
                         discord)   GITHUB_URL="https://raw.githubusercontent.com/mautrix/discord/main/example-config.yaml" ;;
-                        telegram)  GITHUB_URL="https://raw.githubusercontent.com/mautrix/telegram/master/mautrix_telegram/example-config.yaml" ;;
+                        telegram)  GITHUB_URL="https://raw.githubusercontent.com/mautrix/telegram/main/pkg/connector/example-config.yaml" ;;
                         whatsapp)  GITHUB_URL="https://raw.githubusercontent.com/mautrix/whatsapp/master/pkg/connector/example-config.yaml" ;;
                         signal)    GITHUB_URL="https://raw.githubusercontent.com/mautrix/signal/master/pkg/connector/example-config.yaml" ;;
                         slack)     GITHUB_URL="https://raw.githubusercontent.com/mautrix/slack/master/pkg/connector/example-config.yaml" ;;
@@ -2109,9 +2093,9 @@ HSREG
                         fi
                     fi
                     
-                    # Patch api_id and api_hash — nested under telegram: section in Python config
-                    sed -i "/^telegram:/,/^[a-z]/s/^\(    \)api_id:.*/\1api_id: $TG_API_ID/" "$CONFIG_FILE"
-                    sed -i "/^telegram:/,/^[a-z]/s/^\(    \)api_hash:.*/\1api_hash: $TG_API_HASH/" "$CONFIG_FILE"
+                    # Patch api_id and api_hash — top-level keys in Go bridge config
+                    sed -i "s/^api_id:.*/api_id: $TG_API_ID/" "$CONFIG_FILE"
+                    sed -i "s/^api_hash:.*/api_hash: $TG_API_HASH/" "$CONFIG_FILE"
                 fi
                 # ===== END TELEGRAM CONFIG =====
 
@@ -2124,42 +2108,16 @@ HSREG
                 sed -i '/^homeserver:/,/^[^[:space:]]/d' "$CONFIG_FILE"
                 echo -e "\nhomeserver:\n    address: http://synapse:8008\n    domain: $DOMAIN" >> "$CONFIG_FILE"
 
-                # Telegram Python: patch DB URI (sqlite→postgres) and appservice address
-                if [ "$bridge" = "telegram" ]; then
-                    local _TG_DB="mautrix_telegram"
-                    docker exec synapse-db psql -U "$DB_USER" -tc \
-                        "SELECT 1 FROM pg_database WHERE datname='$_TG_DB'" 2>/dev/null | grep -q 1 || \
-                    docker exec synapse-db psql -U "$DB_USER" \
-                        -c "CREATE DATABASE $_TG_DB OWNER $DB_USER;" >/dev/null 2>&1
-                    local _TG_URI="postgresql://$DB_USER:$DB_PASS@synapse-db/$_TG_DB?sslmode=disable"
-                    sed -i "s|database: sqlite:///.*|database: $_TG_URI|g" "$CONFIG_FILE" 2>/dev/null
-                    sed -i "s|database: postgres://user:password@host/db|database: $(_TG_URI)|g" "$CONFIG_FILE" 2>/dev/null
-                    # Patch appservice address
-                    sed -i "s|address: http://localhost:|address: http://mautrix-telegram:|g" "$CONFIG_FILE" 2>/dev/null
-                fi
-
                 # --- Step 4: Generate registration.yaml ---
-                if [ "$bridge" = "telegram" ]; then
-                    # Python bridge — invoke via module syntax
-                    if ! docker run --rm \
-                        -v "$TARGET_DIR/bridges/$bridge:/data" \
-                        "$IMAGE" \
-                        -g -c /data/config.yaml -r /data/registration.yaml >> "$GEN_LOG" 2>&1; then
-                        echo -e "   ${WARNING}⚠️  Registration generation failed for $bridge${RESET}"
-                        tail -5 "$GEN_LOG" | sed 's/^/      /'
-                        continue
-                    fi
-                else
-                    # Go bridges use the detected entrypoint binary
-                    if ! docker run --rm \
-                        --entrypoint "$ENTRYPOINT" \
-                        -v "$TARGET_DIR/bridges/$bridge:/data" \
-                        "$IMAGE" \
-                        -g -c /data/config.yaml -r /data/registration.yaml >> "$GEN_LOG" 2>&1; then
-                        echo -e "   ${WARNING}⚠️  Registration generation failed for $bridge${RESET}"
-                        tail -5 "$GEN_LOG" | sed 's/^/      /'
-                        continue
-                    fi
+                # All bridges are Go-based — use detected entrypoint
+                if ! docker run --rm \
+                    --entrypoint "$ENTRYPOINT" \
+                    -v "$TARGET_DIR/bridges/$bridge:/data" \
+                    "$IMAGE" \
+                    -g -c /data/config.yaml -r /data/registration.yaml >> "$GEN_LOG" 2>&1; then
+                    echo -e "   ${WARNING}⚠️  Registration generation failed for $bridge${RESET}"
+                    tail -5 "$GEN_LOG" | sed 's/^/      /'
+                    continue
                 fi
 
                 if [ ! -f "$TARGET_DIR/bridges/$bridge/registration.yaml" ]; then
@@ -4646,7 +4604,7 @@ show_changelog() {
     echo -e "  ${SUCCESS}•${RESET} ${WARNING}NPM port conflict${RESET} — detects if old NPM is holding 80/443; offers to stop it and reuse ports, or fall back to 8000/8443"
     echo -e "  ${SUCCESS}•${RESET} ${WARNING}Uninstall fix${RESET} — _delete_single_stack now uses docker compose down as primary cleanup; scans by label + known container names for leftovers; NPM included"
     echo -e "  ${SUCCESS}•${RESET} ${WARNING}Orphan cleanup${RESET} — uninstall with no stack dir falls through to scan_and_remove; catches containers by image pattern including NPM and Hookshot"
-    echo -e "  ${SUCCESS}•${RESET} ${WARNING}Telegram bridge${RESET} — restored to Python handling (Go rewrite not yet stable); config path, api_id/hash patching, registration generation all corrected"
+    echo -e "  ${SUCCESS}•${RESET} ${WARNING}Telegram bridge${RESET} — migrated to Go rewrite (mautrix/telegram main branch); uses /pkg/connector/example-config.yaml, top-level api_id/hash, standard Go entrypoint"
     echo -e "  ${SUCCESS}•${RESET} Caddy well-known fix — respond backtick syntax; single-quote wrapping returned literal ' instead of JSON (issue #12)"
     echo -e "  ${SUCCESS}•${RESET} Diagnostics hang fix — docker stats timeout 15s; docker logs timeout 8s per container"
     echo -e "  ${SUCCESS}•${RESET} System package upgrade — ask_yn before upgrading on all distros; default yes"
@@ -6441,27 +6399,16 @@ HSREG
 
             local _BINARY="/usr/bin/mautrix-$bridge"
 
-            # Step 1: extract example config
+            # Step 1: extract example config — all bridges are Go-based
             if [ ! -f "$stack_dir/bridges/$bridge/config.yaml" ]; then
-                if [ "$bridge" = "telegram" ]; then
-                    # Python bridge — config at /opt/mautrix-telegram/example-config.yaml
-                    docker run --rm \
-                        --entrypoint /bin/sh \
-                        -v "$stack_dir/bridges/$bridge:/data" \
-                        "dock.mau.dev/mautrix/telegram:latest" \
-                        -c "cp /opt/mautrix-telegram/example-config.yaml /data/config.yaml" \
-                        >/dev/null 2>&1 || true
-                else
-                    # Go bridges: try standard paths
-                    docker run --rm \
-                        --entrypoint /bin/sh \
-                        -v "$stack_dir/bridges/$bridge:/data" \
-                        "dock.mau.dev/mautrix/$bridge:latest" \
-                        -c "cp /pkg/connector/example-config.yaml /data/config.yaml 2>/dev/null || \
-                            cp /opt/mautrix-$bridge/example-config.yaml /data/config.yaml 2>/dev/null || \
-                            cp /app/example-config.yaml /data/config.yaml 2>/dev/null || true" \
-                        >/dev/null 2>&1 || true
-                fi
+                docker run --rm \
+                    --entrypoint /bin/sh \
+                    -v "$stack_dir/bridges/$bridge:/data" \
+                    "dock.mau.dev/mautrix/$bridge:latest" \
+                    -c "cp /pkg/connector/example-config.yaml /data/config.yaml 2>/dev/null || \
+                        cp /opt/mautrix-$bridge/example-config.yaml /data/config.yaml 2>/dev/null || \
+                        cp /app/example-config.yaml /data/config.yaml 2>/dev/null || true" \
+                    >/dev/null 2>&1 || true
             fi
 
             # Step 2: patch minimum required fields
